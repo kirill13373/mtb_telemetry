@@ -1,0 +1,4 @@
+spidev
+
+[dev]
+pytest>=8.0

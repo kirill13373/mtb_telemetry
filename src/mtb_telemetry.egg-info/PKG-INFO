@@ -1,0 +1,29 @@
+Metadata-Version: 2.4
+Name: mtb-telemetry
+Version: 0.1.0
+Summary: DIY MTB telemetry logger for Raspberry Pi
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: spidev
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+
+# MTB Telemetry
+
+DIY MTB Telemetry Logger
+
+Hardware
+
+- Raspberry Pi 4
+- ADS1256
+- MPU6050
+- Haltech HT-011202
+- Hall Sensor
+- GPS NEO-6M
+
+Sampling Rate
+
+- Suspension: 500 Hz
+- IMU: 500 Hz
+- GPS: 5 Hz
+- Hall Sensor: Interrupt
