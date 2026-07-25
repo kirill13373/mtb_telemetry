@@ -57,11 +57,14 @@ def test_ads1256_status_query() -> None:
     try:
         adc.open()
         status = adc.read_status()
+        status_byte = adc.read_status_byte()
         chip_id = adc.read_chip_id()
     finally:
         adc.close()
 
     assert isinstance(status, list)
-    assert isinstance(chip_id, list)
     assert len(status) >= 1
-    assert len(chip_id) >= 1
+    assert isinstance(status_byte, int)
+    assert 0 <= status_byte <= 0xFF
+    assert isinstance(chip_id, int)
+    assert 0 <= chip_id <= 0x0F
