@@ -1,0 +1,18 @@
+[Unit]
+Description=MTB Telemetry Button Logger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/mtb_telemetry
+ExecStart=/home/pi/mtb_telemetry/scripts/start_button_logger.sh
+Restart=always
+RestartSec=2
+Environment=BUTTON_GPIO=27
+Environment=BUTTON_DEBOUNCE_MS=120
+Environment=TARGET_HZ=80
+
+[Install]
+WantedBy=multi-user.target

@@ -91,6 +91,56 @@ class LoggingSwitch:
         GPIO.cleanup(self.gpio_pin)
 
 
+class LoggingButton:
+    """GPIO-backed momentary button with debounced press event detection."""
+
+    def __init__(self, gpio_pin: int, debounce_ms: int = 120, active_low: bool = True) -> None:
+        if GPIO is None:
+            raise RuntimeError(
+                "RPi.GPIO is not available. Install python3-rpi.gpio or run on Raspberry Pi."
+            )
+
+        self.gpio_pin = gpio_pin
+        self.active_low = active_low
+        self.debounce_s = max(0.0, debounce_ms / 1000.0)
+
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        pull_mode = GPIO.PUD_UP if active_low else GPIO.PUD_DOWN
+        GPIO.setup(self.gpio_pin, GPIO.IN, pull_up_down=pull_mode)
+
+        self._last_stable_pressed = self._read_pressed_raw()
+        self._last_raw_pressed = self._last_stable_pressed
+        self._last_change_time = time.monotonic()
+
+    def _read_pressed_raw(self) -> bool:
+        level = GPIO.input(self.gpio_pin)
+        return (level == GPIO.LOW) if self.active_low else (level == GPIO.HIGH)
+
+    def consume_press_event(self) -> bool:
+        """Return True exactly once per debounced button press edge."""
+        now = time.monotonic()
+        raw_pressed = self._read_pressed_raw()
+
+        if raw_pressed != self._last_raw_pressed:
+            self._last_raw_pressed = raw_pressed
+            self._last_change_time = now
+
+        if (now - self._last_change_time) < self.debounce_s:
+            return False
+
+        if raw_pressed != self._last_stable_pressed:
+            self._last_stable_pressed = raw_pressed
+            if raw_pressed:
+                return True
+
+        return False
+
+    def close(self) -> None:
+        """Release only this GPIO pin during shutdown."""
+        GPIO.cleanup(self.gpio_pin)
+
+
 def sample_voltage(adc: ADS1256, sample_count: int = 40, channel: int = 0) -> float:
     """Return a stable voltage estimate using median of sampled readings."""
     values: list[float] = []
@@ -197,6 +247,21 @@ def main() -> None:
         help="Debounce time for --switch-gpio in milliseconds (default: 250).",
     )
     parser.add_argument(
+        "--button-gpio",
+        type=int,
+        default=None,
+        help=(
+            "Optional BCM GPIO pin for momentary button log control. "
+            "Each press toggles logging on/off."
+        ),
+    )
+    parser.add_argument(
+        "--button-debounce-ms",
+        type=int,
+        default=120,
+        help="Debounce time for --button-gpio in milliseconds (default: 120).",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Disable per-sample terminal output (useful for headless/background operation).",
@@ -221,13 +286,17 @@ def main() -> None:
         parser.error("--print-every must be at least 1")
     if args.target_hz < 0:
         parser.error("--target-hz must be >= 0")
+    if args.switch_gpio is not None and args.button_gpio is not None:
+        parser.error("Use either --switch-gpio or --button-gpio, not both")
 
     target_period_s = 0.0 if args.target_hz == 0 else (1.0 / args.target_hz)
 
     adc = ADS1256()
     adc.open()
     log_switch: LoggingSwitch | None = None
+    log_button: LoggingButton | None = None
     last_switch_state: bool | None = None
+    button_logging_enabled = bool(args.log)
 
     try:
         adc.initialize_single_ended(enable_input_buffer=False)
@@ -255,6 +324,13 @@ def main() -> None:
             print(f"Switch logging control enabled on BCM GPIO {args.switch_gpio}.")
             print("Switch to GND => logging ON, other position => logging paused.")
             print(f"Debounce: {args.switch_debounce_ms} ms")
+        elif args.button_gpio is not None:
+            log_button = LoggingButton(args.button_gpio, debounce_ms=args.button_debounce_ms, active_low=True)
+            print(f"Button logging control enabled on BCM GPIO {args.button_gpio}.")
+            print("Wire button between GPIO and GND (internal pull-up active).")
+            print("Each press toggles logging ON/OFF.")
+            print(f"Debounce: {args.button_debounce_ms} ms")
+            print(f"Initial logging state: {'ON' if button_logging_enabled else 'OFF'}")
         elif args.log:
             print(f"Logging to {LOG_FILE}")
 
@@ -279,6 +355,14 @@ def main() -> None:
                     else:
                         print("Logging OFF")
                     last_switch_state = switch_state
+            elif log_button is not None:
+                if log_button.consume_press_event():
+                    button_logging_enabled = not button_logging_enabled
+                    if button_logging_enabled:
+                        print(f"Logging ON -> {LOG_FILE}")
+                    else:
+                        print("Logging OFF")
+                logging_enabled = button_logging_enabled
 
             if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
@@ -301,6 +385,8 @@ def main() -> None:
     finally:
         if log_switch is not None:
             log_switch.close()
+        if log_button is not None:
+            log_button.close()
         adc.close()
 
 

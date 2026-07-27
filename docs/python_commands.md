@@ -94,6 +94,58 @@ Wenn der Schalter in einer Stellung flattert, Debounce erhoehen (z. B. 400 ms):
 /home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --switch-gpio 17 --switch-debounce-ms 400
 ```
 
+Mit Taster (momentary button) zum Toggle von Logging AN/AUS:
+
+Verdrahtung (default in Skript):
+- eine Taste-Seite an BCM GPIO (z. B. GPIO27)
+- andere Taste-Seite an GND
+- kein externer Widerstand noetig (interner Pull-up wird verwendet)
+
+Startbeispiel:
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --quiet --target-hz 80
+```
+
+Jeder Tastendruck toggelt Logging zwischen AN und AUS.
+
+## 10) Ohne Terminal-Start: Autostart als systemd-Service
+
+Wenn du willst, dass der Button ohne manuelles Starten des Python-Skripts funktioniert,
+muss das Skript als Hintergrunddienst beim Boot laufen.
+
+Einmalig einrichten:
+
+```bash
+cd /home/pi/mtb_telemetry
+chmod +x scripts/start_button_logger.sh
+sudo cp deploy/systemd/mtb-telemetry-button.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mtb-telemetry-button.service
+```
+
+Status pruefen:
+
+```bash
+sudo systemctl status mtb-telemetry-button.service
+```
+
+Live-Logs ansehen:
+
+```bash
+sudo journalctl -u mtb-telemetry-button.service -f
+```
+
+GPIO oder Zielrate anpassen:
+- Datei: `deploy/systemd/mtb-telemetry-button.service`
+- z. B. `Environment=BUTTON_GPIO=27` oder `Environment=TARGET_HZ=80`
+- danach neu laden/neustarten:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart mtb-telemetry-button.service
+```
+
 ## 7) Hauptprogramm starten
 
 ```bash
