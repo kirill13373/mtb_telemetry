@@ -56,6 +56,44 @@ Mit CSV-Logging starten:
 
 Die Messwerte werden dann in `data/haltech_travel.csv` gespeichert.
 
+Ohne laufende Terminal-Ausgabe (fuer spaeteren Headless-Betrieb):
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --log --quiet
+```
+
+Debug-Ausgabe reduzieren (z. B. nur jede 10. Probe):
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --log --print-every 10
+```
+
+Zielrate explizit setzen (z. B. 80 Hz):
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --log --quiet --target-hz 80
+```
+
+Maximale Geschwindigkeit ohne zusaetzliches Pacing:
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --log --quiet --target-hz 0
+```
+
+Mit Kippschalter (z. B. Mitte an GPIO17, eine Seite an GND):
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --switch-gpio 17
+```
+
+Schalter nach GND: Logging AN. Andere Stellung: Logging AUS.
+
+Wenn der Schalter in einer Stellung flattert, Debounce erhoehen (z. B. 400 ms):
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --switch-gpio 17 --switch-debounce-ms 400
+```
+
 ## 7) Hauptprogramm starten
 
 ```bash

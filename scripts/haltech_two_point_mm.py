@@ -12,7 +12,34 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 import statistics
+import sys
 import time
+
+def _load_gpio_module():
+    """Load RPi.GPIO from venv or fallback to system dist-packages on Raspberry Pi."""
+    try:
+        import RPi.GPIO as rpi_gpio
+
+        return rpi_gpio
+    except ImportError:
+        # Common on venvs created without --system-site-packages.
+        for path in (
+            "/usr/lib/python3/dist-packages",
+            "/usr/local/lib/python3.13/dist-packages",
+            "/usr/local/lib/python3/dist-packages",
+        ):
+            if path not in sys.path and Path(path).exists():
+                sys.path.append(path)
+
+        try:
+            import RPi.GPIO as rpi_gpio
+
+            return rpi_gpio
+        except ImportError:
+            return None
+
+
+GPIO = _load_gpio_module()
 
 from mtb_telemetry.logging import append_csv_row, load_calibration, save_calibration, to_mm
 from mtb_telemetry.sensors.ads1256 import ADS1256
@@ -20,6 +47,48 @@ from mtb_telemetry.sensors.ads1256 import ADS1256
 
 CALIBRATION_FILE = Path("calibration/haltech_ads1256_ad0.json")
 LOG_FILE = Path("data/haltech_travel.csv")
+
+
+class LoggingSwitch:
+    """GPIO-backed toggle switch using internal pull-up (active-low)."""
+
+    def __init__(self, gpio_pin: int, debounce_ms: int = 250) -> None:
+        if GPIO is None:
+            raise RuntimeError(
+                "RPi.GPIO is not available. Install python3-rpi.gpio or run on Raspberry Pi."
+            )
+
+        self.gpio_pin = gpio_pin
+        self.debounce_s = max(0.0, debounce_ms / 1000.0)
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+        self._last_raw_state = self._read_raw_state()
+        self._debounced_state = self._last_raw_state
+        self._last_change_time = time.monotonic()
+
+    def _read_raw_state(self) -> bool:
+        """Return raw switch state (True when switch is in GND position)."""
+        return GPIO.input(self.gpio_pin) == GPIO.LOW
+
+    def is_logging_enabled(self) -> bool:
+        """Return debounced switch state (True when switch is in GND position)."""
+        now = time.monotonic()
+        raw_state = self._read_raw_state()
+
+        if raw_state != self._last_raw_state:
+            self._last_raw_state = raw_state
+            self._last_change_time = now
+
+        if raw_state != self._debounced_state and (now - self._last_change_time) >= self.debounce_s:
+            self._debounced_state = raw_state
+
+        return self._debounced_state
+
+    def close(self) -> None:
+        """Release only this GPIO pin during shutdown."""
+        GPIO.cleanup(self.gpio_pin)
 
 
 def sample_voltage(adc: ADS1256, sample_count: int = 40, channel: int = 0) -> float:
@@ -59,6 +128,46 @@ def perform_calibration(adc: ADS1256) -> tuple[float, float]:
     return v_zero, v_hundred
 
 
+def wait_for_stable_startup(
+    adc: ADS1256,
+    v_min_expected: float,
+    v_max_expected: float,
+    max_wait_s: float = 4.0,
+    window_size: int = 12,
+) -> None:
+    """Wait until startup samples are plausible and stable before live output.
+
+    This avoids logging/printing the known cold-start transients that can appear
+    for the first few reads.
+    """
+    deadline = time.time() + max_wait_s
+    window: list[float] = []
+
+    while time.time() < deadline:
+        raw = adc.read_adc_raw_stable(channel=0, samples=7)
+        voltage = adc.raw_to_voltage(raw, vref=5.0, pga=1)
+        window.append(voltage)
+        if len(window) > window_size:
+            window.pop(0)
+
+        if len(window) < window_size:
+            continue
+
+        in_range = all(v_min_expected <= value <= v_max_expected for value in window)
+        span = max(window) - min(window)
+        if in_range and span < 0.12:
+            print(
+                f"Startup settled: window span={span:.4f} V "
+                f"(range {v_min_expected:.3f}..{v_max_expected:.3f} V)"
+            )
+            return
+
+    print(
+        "Warning: startup did not fully stabilize before timeout; "
+        "continuing with live output."
+    )
+
+
 def main() -> None:
     """Run two-point calibration and stream live suspension travel in mm."""
     parser = argparse.ArgumentParser(description="Haltech ADS1256 two-point calibration and mm live output")
@@ -72,10 +181,53 @@ def main() -> None:
         action="store_true",
         help="Append each reading to a CSV file in the data/ directory.",
     )
+    parser.add_argument(
+        "--switch-gpio",
+        type=int,
+        default=None,
+        help=(
+            "Optional BCM GPIO pin for active-low log control switch. "
+            "Switch to GND = logging ON, open = logging paused."
+        ),
+    )
+    parser.add_argument(
+        "--switch-debounce-ms",
+        type=int,
+        default=250,
+        help="Debounce time for --switch-gpio in milliseconds (default: 250).",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Disable per-sample terminal output (useful for headless/background operation).",
+    )
+    parser.add_argument(
+        "--print-every",
+        type=int,
+        default=1,
+        help="Print every Nth sample in terminal output (default: 1). Ignored with --quiet.",
+    )
+    parser.add_argument(
+        "--target-hz",
+        type=float,
+        default=20.0,
+        help=(
+            "Target loop rate in Hz (default: 20). "
+            "Set to 0 for maximum speed without extra pacing."
+        ),
+    )
     args = parser.parse_args()
+    if args.print_every < 1:
+        parser.error("--print-every must be at least 1")
+    if args.target_hz < 0:
+        parser.error("--target-hz must be >= 0")
+
+    target_period_s = 0.0 if args.target_hz == 0 else (1.0 / args.target_hz)
 
     adc = ADS1256()
     adc.open()
+    log_switch: LoggingSwitch | None = None
+    last_switch_state: bool | None = None
 
     try:
         adc.initialize_single_ended(enable_input_buffer=False)
@@ -92,17 +244,43 @@ def main() -> None:
             print(f"  100 mm: {v_hundred:.4f} V")
             print(f"  span:   {span:.4f} V")
 
+        expected_low = min(v_zero, v_hundred) - 0.35
+        expected_high = max(v_zero, v_hundred) + 0.35
+        print("Waiting for stable startup samples...")
+        wait_for_stable_startup(adc, expected_low, expected_high)
+
         print("Live output in mm started. Stop with Ctrl+C.")
-        if args.log:
+        if args.switch_gpio is not None:
+            log_switch = LoggingSwitch(args.switch_gpio, debounce_ms=args.switch_debounce_ms)
+            print(f"Switch logging control enabled on BCM GPIO {args.switch_gpio}.")
+            print("Switch to GND => logging ON, other position => logging paused.")
+            print(f"Debounce: {args.switch_debounce_ms} ms")
+        elif args.log:
             print(f"Logging to {LOG_FILE}")
 
+        sample_index = 0
         while True:
+            loop_started = time.monotonic()
             raw = adc.read_adc_raw_stable(channel=0, samples=7)
             voltage = adc.raw_to_voltage(raw, vref=5.0, pga=1)
             travel_mm = to_mm(voltage, v_zero, v_hundred)
             clip_note = " [CLIP]" if raw >= ((1 << 23) - 1) else ""
-            print(f"voltage={voltage:>7.4f} V  travel={travel_mm:>6.2f} mm{clip_note}")
-            if args.log:
+            sample_index += 1
+            if not args.quiet and sample_index % args.print_every == 0:
+                print(f"voltage={voltage:>7.4f} V  travel={travel_mm:>6.2f} mm{clip_note}")
+
+            logging_enabled = args.log
+            if log_switch is not None:
+                switch_state = log_switch.is_logging_enabled()
+                logging_enabled = switch_state
+                if switch_state != last_switch_state:
+                    if switch_state:
+                        print(f"Logging ON -> {LOG_FILE}")
+                    else:
+                        print("Logging OFF")
+                    last_switch_state = switch_state
+
+            if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
                 append_csv_row(
                     LOG_FILE,
@@ -113,10 +291,16 @@ def main() -> None:
                         "travel_mm": round(travel_mm, 3),
                     },
                 )
-            time.sleep(0.05)
+            if target_period_s > 0.0:
+                elapsed = time.monotonic() - loop_started
+                remaining = target_period_s - elapsed
+                if remaining > 0.0:
+                    time.sleep(remaining)
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if log_switch is not None:
+            log_switch.close()
         adc.close()
 
 

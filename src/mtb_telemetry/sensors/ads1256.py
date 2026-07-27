@@ -129,6 +129,9 @@ class ADS1256:
             enable_input_buffer: Enable ADS1256 analog input buffer.
                 Keep this disabled for widest 0-5V single-ended range.
         """
+        # A hard reset plus short settle helps avoid bad first reads on cold start.
+        self.reset()
+        time.sleep(0.05)
         self.stop_continuous_read()
         # STATUS: auto-calibration ON, optional buffer, MSB-first.
         # BUF=1 can reduce usable near-rail input range on single-supply setups.
@@ -138,6 +141,8 @@ class ADS1256:
         self.write_register(self.ADCON_REGISTER_ADDRESS, [0x00])
         # DRATE: 1000 samples per second as stable default for first tests.
         self.write_register(self.DRATE_REGISTER_ADDRESS, [self.DRATE_1000_SPS])
+        # Allow auto-calibration/filter to settle before first channel reads.
+        time.sleep(0.05)
         self._selected_channel = None
 
     def select_single_ended_channel(self, channel: int) -> None:
