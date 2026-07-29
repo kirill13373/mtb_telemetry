@@ -138,13 +138,25 @@ sudo journalctl -u mtb-telemetry-button.service -f
 
 GPIO oder Zielrate anpassen:
 - Datei: `deploy/systemd/mtb-telemetry-button.service`
-- z. B. `Environment=BUTTON_GPIO=27` oder `Environment=TARGET_HZ=80`
+- Fuer rastenden Schalter (Verriegelung):
+	- `Environment=CONTROL_MODE=switch`
+	- `Environment=CONTROL_GPIO=27`
+- Fuer momentary Taster:
+	- `Environment=CONTROL_MODE=button`
+	- `Environment=CONTROL_GPIO=27`
+- z. B. auch `Environment=TARGET_HZ=80`
 - danach neu laden/neustarten:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart mtb-telemetry-button.service
 ```
+
+Hinweis zum eBay-Schalter 127910320644:
+- Titel/Specs deuten auf "Verriegelung" (rastend, Ein/Aus) und 12 mm Metallschalter hin.
+- Dafuer ist `CONTROL_MODE=switch` die richtige Wahl.
+- Nur den Schaltkontakt an GPIO+GND verwenden.
+- Falls eine LED im Schalter vorhanden ist: LED nicht direkt an GPIO 3.3V betreiben, sondern separat passend versorgen.
 
 ## 7) Hauptprogramm starten
 
