@@ -186,6 +186,12 @@ ls calibration/haltech_ads1256_ad0.json
 
 ## 11) Sufni-CSV Export (mit RTC-Zeit)
 
+Automatisch (Service/Logger):
+- Bei Logging ON -> OFF wird der Sufni-Export automatisch gestartet.
+- Pro Session-Datei `data/haltech_travel_*.csv` entstehen in `data/sufni/`:
+	- `data/sufni/haltech_travel_*_sufni.csv`
+	- `data/sufni/haltech_travel_*_sufni_meta.json`
+
 Nach einer Session mit `--log` in das Sufni-Format exportieren:
 
 ```bash

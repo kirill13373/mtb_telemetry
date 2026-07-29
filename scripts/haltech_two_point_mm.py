@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
+import subprocess
 import statistics
 import sys
 import time
@@ -47,6 +48,7 @@ from mtb_telemetry.sensors.ads1256 import ADS1256
 
 CALIBRATION_FILE = Path("calibration/haltech_ads1256_ad0.json")
 LOG_DIR = Path("data")
+SUFNI_DIR = LOG_DIR / "sufni"
 LOG_FILE_PREFIX = "haltech_travel"
 LOG_FILE = LOG_DIR / "haltech_travel.csv"
 
@@ -57,6 +59,50 @@ def build_session_log_file(now_utc: datetime | None = None) -> Path:
         now_utc = datetime.now(timezone.utc)
     stamp = now_utc.strftime("%Y%m%dT%H%M%SZ")
     return LOG_DIR / f"{LOG_FILE_PREFIX}_{stamp}.csv"
+
+
+def build_sufni_output_paths(input_csv_path: Path) -> tuple[Path, Path]:
+    """Build Sufni output and metadata paths based on the source session CSV."""
+    stem = input_csv_path.stem
+    output_csv = SUFNI_DIR / f"{stem}_sufni.csv"
+    output_meta = SUFNI_DIR / f"{stem}_sufni_meta.json"
+    return output_csv, output_meta
+
+
+def export_session_to_sufni(input_csv_path: Path) -> None:
+    """Run the Sufni export script for one recorded session CSV."""
+    if not input_csv_path.exists() or input_csv_path.stat().st_size == 0:
+        print(f"Skip Sufni export (no data): {input_csv_path}")
+        return
+
+    export_script = Path(__file__).with_name("export_sufni_csv.py")
+    if not export_script.exists():
+        print(f"Sufni export script missing: {export_script}")
+        return
+
+    output_csv, output_meta = build_sufni_output_paths(input_csv_path)
+    command = [
+        sys.executable,
+        str(export_script),
+        "--input",
+        str(input_csv_path),
+        "--output",
+        str(output_csv),
+        "--metadata",
+        str(output_meta),
+    ]
+
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        print(f"Sufni export done: {output_csv}")
+        if result.stdout.strip():
+            print(result.stdout.strip())
+    except subprocess.CalledProcessError as exc:
+        print(f"Sufni export failed for {input_csv_path}: {exc}")
+        if exc.stdout:
+            print(exc.stdout.strip())
+        if exc.stderr:
+            print(exc.stderr.strip())
 
 
 class LoggingSwitch:
@@ -307,6 +353,7 @@ def main() -> None:
     log_button: LoggingButton | None = None
     last_switch_state: bool | None = None
     button_logging_enabled = bool(args.log)
+    prev_logging_enabled = False
     current_log_file: Path | None = None
 
     try:
@@ -377,6 +424,9 @@ def main() -> None:
                         print("Logging OFF")
                 logging_enabled = button_logging_enabled
 
+            if prev_logging_enabled and not logging_enabled and current_log_file is not None:
+                export_session_to_sufni(current_log_file)
+
             if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
                 if current_log_file is None:
@@ -395,9 +445,12 @@ def main() -> None:
                 remaining = target_period_s - elapsed
                 if remaining > 0.0:
                     time.sleep(remaining)
+            prev_logging_enabled = logging_enabled
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if prev_logging_enabled and current_log_file is not None:
+            export_session_to_sufni(current_log_file)
         if log_switch is not None:
             log_switch.close()
         if log_button is not None:
