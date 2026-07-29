@@ -10,7 +10,7 @@ WorkingDirectory=/home/pi/mtb_telemetry
 ExecStart=/home/pi/mtb_telemetry/scripts/start_button_logger.sh
 Restart=always
 RestartSec=2
-Environment=CONTROL_MODE=switch
+Environment=CONTROL_MODE=button
 Environment=CONTROL_GPIO=27
 Environment=CONTROL_DEBOUNCE_MS=120
 Environment=TARGET_HZ=80

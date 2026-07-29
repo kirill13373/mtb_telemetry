@@ -184,6 +184,25 @@ Pruefen, ob Kalibrierdatei existiert:
 ls calibration/haltech_ads1256_ad0.json
 ```
 
+## 11) Sufni-CSV Export (mit RTC-Zeit)
+
+Nach einer Session mit `--log` in das Sufni-Format exportieren:
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/export_sufni_csv.py \
+	--input data/haltech_travel.csv \
+	--output data/session_sufni.csv \
+	--metadata data/session_sufni_meta.json
+```
+
+Ergebnis:
+- `data/session_sufni.csv` im Sufni-Format `Time;Fork;Shock`
+- `data/session_sufni_meta.json` mit `session_start_utc` aus dem ersten Log-Timestamp (UTC, RTC-basiert)
+
+Fuer den Sufni-Import:
+- CSV-Datei: `data/session_sufni.csv`
+- Start time: Wert `session_start_utc` aus `data/session_sufni_meta.json`
+
 ## Hinweis
 
 Wenn du in einer neuen Shell arbeitest, zuerst immer in den Projektordner wechseln und die Befehle mit dem Python aus dem venv ausfuehren.
