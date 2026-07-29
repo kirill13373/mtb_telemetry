@@ -7,7 +7,9 @@ PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 CONTROL_MODE="${CONTROL_MODE:-switch}"
 CONTROL_GPIO="${CONTROL_GPIO:-27}"
 CONTROL_DEBOUNCE_MS="${CONTROL_DEBOUNCE_MS:-120}"
-TARGET_HZ="${TARGET_HZ:-80}"
+TARGET_HZ="${TARGET_HZ:-500}"
+ADC_SAMPLES="${ADC_SAMPLES:-1}"
+CSV_FLUSH_EVERY="${CSV_FLUSH_EVERY:-200}"
 PRINT_EVERY="${PRINT_EVERY:-1}"
 
 cd "$PROJECT_DIR"
@@ -17,6 +19,8 @@ if [[ "$CONTROL_MODE" == "switch" ]]; then
     --switch-gpio "$CONTROL_GPIO" \
     --switch-debounce-ms "$CONTROL_DEBOUNCE_MS" \
     --target-hz "$TARGET_HZ" \
+    --adc-samples "$ADC_SAMPLES" \
+    --csv-flush-every "$CSV_FLUSH_EVERY" \
     --quiet \
     --print-every "$PRINT_EVERY"
 elif [[ "$CONTROL_MODE" == "button" ]]; then
@@ -24,6 +28,8 @@ elif [[ "$CONTROL_MODE" == "button" ]]; then
     --button-gpio "$CONTROL_GPIO" \
     --button-debounce-ms "$CONTROL_DEBOUNCE_MS" \
     --target-hz "$TARGET_HZ" \
+    --adc-samples "$ADC_SAMPLES" \
+    --csv-flush-every "$CSV_FLUSH_EVERY" \
     --quiet \
     --print-every "$PRINT_EVERY"
 else

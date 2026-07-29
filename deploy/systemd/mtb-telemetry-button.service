@@ -13,7 +13,9 @@ RestartSec=2
 Environment=CONTROL_MODE=button
 Environment=CONTROL_GPIO=27
 Environment=CONTROL_DEBOUNCE_MS=120
-Environment=TARGET_HZ=80
+Environment=TARGET_HZ=500
+Environment=ADC_SAMPLES=1
+Environment=CSV_FLUSH_EVERY=200
 
 [Install]
 WantedBy=multi-user.target

@@ -9,6 +9,7 @@ Workflow:
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
@@ -42,7 +43,7 @@ def _load_gpio_module():
 
 GPIO = _load_gpio_module()
 
-from mtb_telemetry.logging import append_csv_row, load_calibration, save_calibration, to_mm
+from mtb_telemetry.logging import load_calibration, save_calibration, to_mm
 from mtb_telemetry.sensors.ads1256 import ADS1256
 
 
@@ -103,6 +104,41 @@ def export_session_to_sufni(input_csv_path: Path) -> None:
             print(exc.stdout.strip())
         if exc.stderr:
             print(exc.stderr.strip())
+
+
+class SessionCsvWriter:
+    """Buffered CSV writer for high-rate logging without per-row file reopen."""
+
+    def __init__(self, path: Path, flush_every: int = 100) -> None:
+        self.path = path
+        self.flush_every = max(1, flush_every)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self.path.open("a", encoding="utf-8", newline="")
+        self._writer = csv.DictWriter(
+            self._handle,
+            fieldnames=["timestamp", "raw", "voltage", "travel_mm"],
+        )
+        if self.path.stat().st_size == 0:
+            self._writer.writeheader()
+        self._rows_since_flush = 0
+
+    def append(self, timestamp: str, raw: int, voltage: float, travel_mm: float) -> None:
+        self._writer.writerow(
+            {
+                "timestamp": timestamp,
+                "raw": raw,
+                "voltage": round(voltage, 6),
+                "travel_mm": round(travel_mm, 3),
+            }
+        )
+        self._rows_since_flush += 1
+        if self._rows_since_flush >= self.flush_every:
+            self._handle.flush()
+            self._rows_since_flush = 0
+
+    def close(self) -> None:
+        self._handle.flush()
+        self._handle.close()
 
 
 class LoggingSwitch:
@@ -337,11 +373,30 @@ def main() -> None:
             "Set to 0 for maximum speed without extra pacing."
         ),
     )
+    parser.add_argument(
+        "--adc-samples",
+        type=int,
+        default=7,
+        help=(
+            "Median sample count per point (default: 7). "
+            "Use 1 for highest possible rate (e.g. 500 Hz target)."
+        ),
+    )
+    parser.add_argument(
+        "--csv-flush-every",
+        type=int,
+        default=120,
+        help="Flush CSV after N rows (default: 120).",
+    )
     args = parser.parse_args()
     if args.print_every < 1:
         parser.error("--print-every must be at least 1")
     if args.target_hz < 0:
         parser.error("--target-hz must be >= 0")
+    if args.adc_samples < 1:
+        parser.error("--adc-samples must be at least 1")
+    if args.csv_flush_every < 1:
+        parser.error("--csv-flush-every must be at least 1")
     if args.switch_gpio is not None and args.button_gpio is not None:
         parser.error("Use either --switch-gpio or --button-gpio, not both")
 
@@ -355,6 +410,7 @@ def main() -> None:
     button_logging_enabled = bool(args.log)
     prev_logging_enabled = False
     current_log_file: Path | None = None
+    session_writer: SessionCsvWriter | None = None
 
     try:
         adc.initialize_single_ended(enable_input_buffer=False)
@@ -392,10 +448,16 @@ def main() -> None:
         elif args.log:
             print(f"Logging to {LOG_FILE}")
 
+        def close_active_writer() -> None:
+            nonlocal session_writer
+            if session_writer is not None:
+                session_writer.close()
+                session_writer = None
+
         sample_index = 0
         while True:
             loop_started = time.monotonic()
-            raw = adc.read_adc_raw_stable(channel=0, samples=7)
+            raw = adc.read_adc_raw_stable(channel=0, samples=args.adc_samples)
             voltage = adc.raw_to_voltage(raw, vref=5.0, pga=1)
             travel_mm = to_mm(voltage, v_zero, v_hundred)
             clip_note = " [CLIP]" if raw >= ((1 << 23) - 1) else ""
@@ -425,21 +487,16 @@ def main() -> None:
                 logging_enabled = button_logging_enabled
 
             if prev_logging_enabled and not logging_enabled and current_log_file is not None:
+                close_active_writer()
                 export_session_to_sufni(current_log_file)
 
             if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
                 if current_log_file is None:
                     current_log_file = build_session_log_file()
-                append_csv_row(
-                    current_log_file,
-                    {
-                        "timestamp": timestamp,
-                        "raw": raw,
-                        "voltage": round(voltage, 6),
-                        "travel_mm": round(travel_mm, 3),
-                    },
-                )
+                if session_writer is None:
+                    session_writer = SessionCsvWriter(current_log_file, flush_every=args.csv_flush_every)
+                session_writer.append(timestamp=timestamp, raw=raw, voltage=voltage, travel_mm=travel_mm)
             if target_period_s > 0.0:
                 elapsed = time.monotonic() - loop_started
                 remaining = target_period_s - elapsed
@@ -449,6 +506,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if session_writer is not None:
+            session_writer.close()
         if prev_logging_enabled and current_log_file is not None:
             export_session_to_sufni(current_log_file)
         if log_switch is not None:
