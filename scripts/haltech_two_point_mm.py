@@ -46,7 +46,17 @@ from mtb_telemetry.sensors.ads1256 import ADS1256
 
 
 CALIBRATION_FILE = Path("calibration/haltech_ads1256_ad0.json")
-LOG_FILE = Path("data/haltech_travel.csv")
+LOG_DIR = Path("data")
+LOG_FILE_PREFIX = "haltech_travel"
+LOG_FILE = LOG_DIR / "haltech_travel.csv"
+
+
+def build_session_log_file(now_utc: datetime | None = None) -> Path:
+    """Return a unique CSV path for one recording session."""
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    stamp = now_utc.strftime("%Y%m%dT%H%M%SZ")
+    return LOG_DIR / f"{LOG_FILE_PREFIX}_{stamp}.csv"
 
 
 class LoggingSwitch:
@@ -297,6 +307,7 @@ def main() -> None:
     log_button: LoggingButton | None = None
     last_switch_state: bool | None = None
     button_logging_enabled = bool(args.log)
+    current_log_file: Path | None = None
 
     try:
         adc.initialize_single_ended(enable_input_buffer=False)
@@ -351,7 +362,8 @@ def main() -> None:
                 logging_enabled = switch_state
                 if switch_state != last_switch_state:
                     if switch_state:
-                        print(f"Logging ON -> {LOG_FILE}")
+                        current_log_file = build_session_log_file()
+                        print(f"Logging ON -> {current_log_file}")
                     else:
                         print("Logging OFF")
                     last_switch_state = switch_state
@@ -359,15 +371,18 @@ def main() -> None:
                 if log_button.consume_press_event():
                     button_logging_enabled = not button_logging_enabled
                     if button_logging_enabled:
-                        print(f"Logging ON -> {LOG_FILE}")
+                        current_log_file = build_session_log_file()
+                        print(f"Logging ON -> {current_log_file}")
                     else:
                         print("Logging OFF")
                 logging_enabled = button_logging_enabled
 
             if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
+                if current_log_file is None:
+                    current_log_file = build_session_log_file()
                 append_csv_row(
-                    LOG_FILE,
+                    current_log_file,
                     {
                         "timestamp": timestamp,
                         "raw": raw,
