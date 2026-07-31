@@ -139,6 +139,18 @@ find "$REMOTE_PROJECT" \
 
 tar -xf "$ARCHIVE" -C "$REMOTE_PROJECT"
 
+if [ -d "$REMOTE_PROJECT/scripts" ]; then
+    find "$REMOTE_PROJECT/scripts" -type f -name "*.sh" -print0 |
+        while IFS= read -r -d '' script_path; do
+            sed -i 's/\r$//' "$script_path"
+            chmod +x "$script_path"
+        done
+fi
+
+if [ -d "$REMOTE_PROJECT/deploy/systemd" ]; then
+    find "$REMOTE_PROJECT/deploy/systemd" -type f -name "*.service" -exec sed -i 's/\r$//' {} +
+fi
+
 cd "$REMOTE_PROJECT"
 venv/bin/python -m pip install -e .
 

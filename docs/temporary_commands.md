@@ -57,3 +57,16 @@ sudo cp /home/pi/mtb_telemetry/deploy/systemd/mtb-telemetry-button.service /etc/
 sudo systemctl daemon-reload
 sudo systemctl restart mtb-telemetry-button.service
 ```
+
+## 9) Troubleshooting: Service startet nicht, Exit-Code 2 / "blob data"
+
+Wenn im Journal bei Startskripten Fehler wie `status=2/INVALIDARGUMENT`, `line: invalid option name`
+oder `[xxB blob data]` auftauchen, zuerst Zeilenenden im Shell-Skript pruefen und auf LF umstellen:
+
+```bash
+sed -n '1,5p' /home/pi/mtb_telemetry/scripts/start_button_logger.sh
+sudo sed -i 's/\r$//' /home/pi/mtb_telemetry/scripts/start_button_logger.sh
+sudo chmod +x /home/pi/mtb_telemetry/scripts/start_button_logger.sh
+sudo systemctl restart mtb-telemetry-button.service
+sudo journalctl -u mtb-telemetry-button.service -n 50 --no-pager -o cat
+```
