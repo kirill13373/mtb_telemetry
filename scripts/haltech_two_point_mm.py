@@ -538,6 +538,58 @@ def main() -> None:
     loop_overrun_max_s = 0.0
     logged_sample_count = 0
 
+    def build_metrics_payload(run_ended_utc: datetime, reason: str) -> dict[str, object]:
+        """Build a consistent metrics payload for JSON reporting."""
+        duration_s = 0.0
+        effective_loop_hz = 0.0
+        if acquisition_start_monotonic is not None:
+            duration_s = max(0.0, time.monotonic() - acquisition_start_monotonic)
+        if duration_s > 0.0 and sample_index > 0:
+            effective_loop_hz = sample_index / duration_s
+
+        mean_loop_interval_s: float | None = None
+        if loop_interval_count > 0:
+            mean_loop_interval_s = loop_interval_sum_s / loop_interval_count
+
+        return {
+            "run_started_utc": None
+            if acquisition_start_utc is None
+            else acquisition_start_utc.isoformat().replace("+00:00", "Z"),
+            "run_ended_utc": run_ended_utc.isoformat().replace("+00:00", "Z"),
+            "report_reason": reason,
+            "target_hz": args.target_hz,
+            "adc_samples": args.adc_samples,
+            "csv_flush_every": args.csv_flush_every,
+            "samples_total": sample_index,
+            "samples_logged": logged_sample_count,
+            "duration_s": round(duration_s, 6),
+            "effective_loop_hz": round(effective_loop_hz, 6),
+            "loop_overruns": loop_overrun_count,
+            "max_overrun_s": round(loop_overrun_max_s, 6),
+            "max_loop_elapsed_s": round(loop_elapsed_max_s, 6),
+            "mean_loop_interval_s": None
+            if mean_loop_interval_s is None
+            else round(mean_loop_interval_s, 6),
+            "min_loop_interval_s": None
+            if loop_interval_min_s is None
+            else round(loop_interval_min_s, 6),
+            "max_loop_interval_s": round(loop_interval_max_s, 6),
+            "logging_mode": "switch"
+            if args.switch_gpio is not None
+            else ("button" if args.button_gpio is not None else "always_on"),
+        }
+
+    def write_metrics_if_enabled(reason: str) -> None:
+        if args.session_metrics_json is None:
+            return
+
+        payload = build_metrics_payload(datetime.now(timezone.utc), reason)
+        try:
+            write_metrics_report(args.session_metrics_json, payload)
+            print(f"Metrics written ({reason}): {args.session_metrics_json}")
+        except OSError as exc:
+            print(f"Failed to write metrics file: {exc}")
+
     try:
         adc.initialize_single_ended(enable_input_buffer=False)
         adc.prime_channel(channel=0, discard=10)
@@ -606,6 +658,7 @@ def main() -> None:
                 return
 
             close_active_writer()
+            write_metrics_if_enabled("session_finalized")
             export_session_to_sufni(current_log_file)
             current_log_file = None
             prev_logging_enabled = False
@@ -731,39 +784,7 @@ def main() -> None:
                 print(f"  min_loop_interval_ms: {loop_interval_min_s * 1000.0:.3f}")
             print(f"  max_loop_interval_ms: {loop_interval_max_s * 1000.0:.3f}")
 
-        metrics_payload: dict[str, object] = {
-            "run_started_utc": None
-            if acquisition_start_utc is None
-            else acquisition_start_utc.isoformat().replace("+00:00", "Z"),
-            "run_ended_utc": run_ended_utc.isoformat().replace("+00:00", "Z"),
-            "target_hz": args.target_hz,
-            "adc_samples": args.adc_samples,
-            "csv_flush_every": args.csv_flush_every,
-            "samples_total": sample_index,
-            "samples_logged": logged_sample_count,
-            "duration_s": round(duration_s, 6),
-            "effective_loop_hz": round(effective_loop_hz, 6),
-            "loop_overruns": loop_overrun_count,
-            "max_overrun_s": round(loop_overrun_max_s, 6),
-            "max_loop_elapsed_s": round(loop_elapsed_max_s, 6),
-            "mean_loop_interval_s": None
-            if mean_loop_interval_s is None
-            else round(mean_loop_interval_s, 6),
-            "min_loop_interval_s": None
-            if loop_interval_min_s is None
-            else round(loop_interval_min_s, 6),
-            "max_loop_interval_s": round(loop_interval_max_s, 6),
-            "logging_mode": "switch"
-            if args.switch_gpio is not None
-            else ("button" if args.button_gpio is not None else "always_on"),
-        }
-
-        if args.session_metrics_json is not None:
-            try:
-                write_metrics_report(args.session_metrics_json, metrics_payload)
-                print(f"Metrics written: {args.session_metrics_json}")
-            except OSError as exc:
-                print(f"Failed to write metrics file: {exc}")
+        write_metrics_if_enabled("run_ended")
 
         if session_writer is not None:
             session_writer.close()
