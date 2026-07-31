@@ -11,11 +11,11 @@ ExecStart=/bin/bash /home/pi/mtb_telemetry/scripts/start_button_logger.sh
 Restart=always
 RestartSec=2
 Environment=CONTROL_MODE=button
-Environment=CONTROL_GPIO=27
+Environment=CONTROL_GPIO=5
 Environment=CONTROL_DEBOUNCE_MS=120
-Environment=SHUTDOWN_GPIO=22
+Environment=SHUTDOWN_GPIO=6
 Environment=SHUTDOWN_DEBOUNCE_MS=800
-Environment=STATUS_LED_GPIO=23
+Environment=STATUS_LED_GPIO=24
 Environment=STATUS_LED_ACTIVE_LOW=0
 Environment=SESSION_METRICS_JSON=/home/pi/mtb_telemetry/data/last_run_metrics.json
 Environment=TARGET_HZ=500

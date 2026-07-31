@@ -226,7 +226,7 @@ Aenderungen in `scripts/export_sufni_csv.py`:
 - SPI-Bus bei 50 kHz bis 1 MHz getestet: immer nur Nullen.
 - beide SPI-Devices (`spidev0.0` und `spidev0.1`) ausprobiert: kein Unterschied.
 - SPI-Mode 0..3 getestet: kein Unterschied.
-- Digitale Steuerpins des Projekts sind 22, 23, 27; sie kollidieren nicht mit SPI.
+- Korrektur: GPIO22 (ADS1256 CS), GPIO23 (DAC CS) und GPIO27 (ADS1256 PDWN/SYNC) sind feste Steuerpins des Waveshare High-Precision AD/DA HAT. Die frueher dort angeschlossenen Bedienelemente kollidierten direkt mit dem Board. Die Bedienelemente wurden deshalb auf GPIO5 (Logging), GPIO6 (Shutdown) und GPIO24 (Status-LED) verschoben.
 
 ### Treiber-Fix, der keinen Unterschied gemacht hat
 - Register- und Datenlesen wurden in `src/mtb_telemetry/sensors/ads1256.py` auf eine zusammenhaengende SPI-Transaktion umgestellt.

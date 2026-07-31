@@ -521,6 +521,20 @@ def main() -> None:
     }:
         parser.error("--status-led-gpio must be different from button/switch GPIOs")
 
+    waveshare_reserved_gpios = {17, 18, 22, 23, 27}
+    control_gpios = {
+        "--switch-gpio": args.switch_gpio,
+        "--button-gpio": args.button_gpio,
+        "--shutdown-button-gpio": args.shutdown_button_gpio,
+        "--status-led-gpio": args.status_led_gpio,
+    }
+    for option, gpio in control_gpios.items():
+        if gpio in waveshare_reserved_gpios:
+            parser.error(
+                f"{option} BCM GPIO {gpio} is reserved by the Waveshare AD/DA HAT "
+                "(DRDY=17, RESET=18, ADS_CS=22, DAC_CS=23, PDWN=27)"
+            )
+
     target_period_s = 0.0 if args.target_hz == 0 else (1.0 / args.target_hz)
 
     adc = ADS1256()

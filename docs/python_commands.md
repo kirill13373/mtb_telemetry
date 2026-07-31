@@ -97,33 +97,41 @@ Wenn der Schalter in einer Stellung flattert, Debounce erhoehen (z. B. 400 ms):
 Mit Taster (momentary button) zum Toggle von Logging AN/AUS:
 
 Verdrahtung (default in Skript):
-- eine Taste-Seite an BCM GPIO (z. B. GPIO27)
+- eine Taste-Seite an BCM GPIO5 (physischer Pin 29)
 - andere Taste-Seite an GND
 - kein externer Widerstand noetig (interner Pull-up wird verwendet)
 
 Zweiter Taster fuer Raspberry Pi Shutdown:
-- eine Taste-Seite an BCM GPIO (Vorschlag: GPIO22)
+- eine Taste-Seite an BCM GPIO6 (physischer Pin 31)
 - andere Taste-Seite an denselben GND wie der Logging-Taster
 - ebenfalls kein externer Widerstand noetig (interner Pull-up wird verwendet)
 - wichtig: Shutdown-Taster muss an einem anderen GPIO als der Logging-Taster haengen
 
 Status-LED fuer "Messung laeuft":
-- Vorschlag GPIO: BCM GPIO23 (physischer Pin 16)
-- LED-Anode (langes Bein) -> ueber 220 Ohm bis 470 Ohm Vorwiderstand an GPIO23
+- GPIO: BCM GPIO24 (physischer Pin 18)
+- LED-Anode (langes Bein) -> ueber 220 Ohm bis 470 Ohm Vorwiderstand an GPIO24
 - LED-Kathode (kurzes Bein) -> GND
 - Verhalten: LED AN waehrend Logging aktiv, LED AUS waehrend Logging pausiert
 - nur bei LED-Modulen mit invertierter Logik: `--status-led-active-low` setzen
 
+Reservierte GPIOs des direkt aufgesteckten Waveshare High-Precision AD/DA HAT:
+- GPIO17: ADS1256 DRDY
+- GPIO18: ADS1256 RESET
+- GPIO22: ADS1256 CS
+- GPIO23: DAC CS
+- GPIO27: ADS1256 PDWN/SYNC
+- Diese GPIOs duerfen nicht fuer Taster, Schalter oder Status-LED verwendet werden.
+
 Startbeispiel:
 
 ```bash
-/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --status-led-gpio 23 --quiet --target-hz 80
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 5 --shutdown-button-gpio 6 --status-led-gpio 24 --quiet --target-hz 80
 ```
 
 500-Hz Benchmark mit Laufzeit-Metriken (JSON-Report):
 
 ```bash
-/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --status-led-gpio 23 --target-hz 500 --adc-samples 1 --session-metrics-json data/bench_500hz_metrics.json
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 5 --shutdown-button-gpio 6 --status-led-gpio 24 --target-hz 500 --adc-samples 1 --session-metrics-json data/bench_500hz_metrics.json
 ```
 
 Beim Beenden (Ctrl+C oder Service-Stop) werden Kennzahlen wie effektive Hz,
@@ -163,15 +171,15 @@ GPIO oder Zielrate anpassen:
 - Datei: `deploy/systemd/mtb-telemetry-button.service`
 - Fuer rastenden Schalter (Verriegelung):
 	- `Environment=CONTROL_MODE=switch`
-	- `Environment=CONTROL_GPIO=27`
+	- `Environment=CONTROL_GPIO=5`
 - Fuer momentary Taster:
 	- `Environment=CONTROL_MODE=button`
-	- `Environment=CONTROL_GPIO=27`
+	- `Environment=CONTROL_GPIO=5`
 - Fuer den Shutdown-Taster z. B.:
-	- `Environment=SHUTDOWN_GPIO=22`
+	- `Environment=SHUTDOWN_GPIO=6`
 	- `Environment=SHUTDOWN_DEBOUNCE_MS=800`
 - Fuer die Status-LED z. B.:
-	- `Environment=STATUS_LED_GPIO=23`
+	- `Environment=STATUS_LED_GPIO=24`
 	- `Environment=STATUS_LED_ACTIVE_LOW=0`
 - Fuer Laufzeit-Metriken z. B.:
 	- `Environment=SESSION_METRICS_JSON=/home/pi/mtb_telemetry/data/last_run_metrics.json`

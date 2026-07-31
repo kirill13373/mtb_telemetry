@@ -10,7 +10,7 @@ In `scripts/start_button_logger.sh` wurden die neuen Umgebungsvariablen `SHUTDOW
 
 ## 3) Systemd-Default und Dokumentation ergänzt
 
-In `deploy/systemd/mtb-telemetry-button.service` wurden Default-Werte für den Shutdown-Taster ergänzt, aktuell GPIO22. In `docs/python_commands.md` wurden Verdrahtung, Startbeispiel und die nötige `sudoers`-Regel dokumentiert, damit der Dienst als User `pi` das Herunterfahren ohne Passwort auslösen kann.
+In `deploy/systemd/mtb-telemetry-button.service` sind konfliktfreie GPIOs konfiguriert: Logging-Taster GPIO5, Shutdown-Taster GPIO6 und Status-LED GPIO24. GPIO17, GPIO18, GPIO22, GPIO23 und GPIO27 sind durch das direkt aufgesteckte Waveshare High-Precision AD/DA HAT reserviert. In `docs/python_commands.md` wurden Verdrahtung, Startbeispiel und die nötige `sudoers`-Regel dokumentiert, damit der Dienst als User `pi` das Herunterfahren ohne Passwort auslösen kann.
 
 ## 4) Deploy-Skript korrigiert
 
