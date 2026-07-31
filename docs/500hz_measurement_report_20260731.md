@@ -79,6 +79,38 @@ Die zweite Messung wurde mit aktivem SESSION_METRICS_JSON erfasst. Die Datei
 ### Aktualisiertes Fazit
 Metrics-JSON ist jetzt funktionsfaehig im Service-Betrieb. Die 500-Hz-Schleife laeuft stabil, aber weiterhin leicht unter Soll (typisch ~483 Hz).
 
+## Update: Benchmark nach ADS-Aenderung
+
+Durchgefuehrter Vergleichslauf (Service kurz gestoppt, 20s Benchmark im Vordergrund, danach Service wieder gestartet):
+- Kommando-Basis: scripts/haltech_two_point_mm.py mit --log, --target-hz 500, --adc-samples 1, --quiet
+- Metrics-Datei: /home/pi/mtb_telemetry/data/bench_500hz_metrics_after_ads.json
+
+### Ergebnisse aus bench_500hz_metrics_after_ads.json
+- run_started_utc: 2026-07-31T09:22:48.331057Z
+- run_ended_utc: 2026-07-31T09:23:08.060679Z
+- report_reason: run_ended
+- samples_total: 9528
+- samples_logged: 9528
+- duration_s: 19.729646
+- effective_loop_hz: 482.928065
+- loop_overruns: 0
+- max_overrun_s: 0.0
+- max_loop_elapsed_s: 0.000778
+- mean_loop_interval_s: 0.002071
+- min_loop_interval_s: 0.002012
+- max_loop_interval_s: 0.002117
+- logging_mode: always_on
+
+### Bewertung
+- Effektive Rate bleibt in der gleichen Groessenordnung wie vorher (~483 Hz).
+- In diesem Lauf wurden keine Overruns gemessen.
+- Maximal gemessene Loop-Zeit ist niedrig und stabil (0.778 ms), damit bleibt das Timing robust.
+
+### Kurzvergleich vorher vs. nach ADS-Aenderung
+- Vorher (zweite Messung): effective_loop_hz 483.419297, loop_overruns 1
+- Nach ADS-Aenderung (Benchmark): effective_loop_hz 482.928065, loop_overruns 0
+- Einordnung: Kein Hinweis auf Regression bei der Schleifenstabilitaet; mittlere Frequenz bleibt praktisch unveraendert unterhalb des 500-Hz-Ziels.
+
 ## Phase B/F Fix: ADS1256-Treiber entlastet (2026-07-31)
 
 ### Ursache des 17-Hz-Defizits
