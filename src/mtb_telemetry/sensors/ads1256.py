@@ -99,9 +99,11 @@ class ADS1256:
         if byte_count < 1:
             raise ValueError("byte_count must be at least 1.")
 
-        # ADS1256 RREG frame: [0x10 | addr, count-1], then read bytes.
-        self.transfer([self.COMMAND_RREG | register_address, byte_count - 1])
-        return self.transfer([0xFF] * byte_count)
+        # Keep command + read clocks in one CS window. The extra dummy byte
+        # provides >t6 delay before register data is shifted out.
+        frame = [self.COMMAND_RREG | register_address, byte_count - 1, 0xFF, *([0xFF] * byte_count)]
+        response = self.transfer(frame)
+        return response[-byte_count:]
 
     def read_status(self) -> list[int]:
         """Read the ADS1256 status register.
@@ -165,21 +167,17 @@ class ADS1256:
             time.sleep(0.003)
             self._selected_channel = channel
             # Discard first conversion after channel switch.
-            self.transfer([self.COMMAND_RDATA])
-            time.sleep(0.00005)
-            self.transfer([0xFF, 0xFF, 0xFF])
+            self.transfer([self.COMMAND_RDATA, 0xFF, 0xFF, 0xFF, 0xFF])
 
         # No pacing sleep here: the outer loop (target_period_s) handles the
         # 2 ms inter-sample cadence.  At 2000 SPS the ADC produces a fresh
         # conversion every 0.5 ms, so a new result is always ready by the time
         # we issue RDATA.
 
-        # ADS1256 RDATA is a two-step transaction:
-        # 1) Send RDATA command
-        # 2) Clock out 24-bit result
-        self.transfer([self.COMMAND_RDATA])
-        time.sleep(0.00005)
-        response = self.transfer([0xFF, 0xFF, 0xFF])
+        # Keep RDATA command and payload clocks in one transfer to avoid CS
+        # toggles between command and data bytes.
+        response = self.transfer([self.COMMAND_RDATA, 0xFF, 0xFF, 0xFF, 0xFF])
+        response = response[-3:]
         raw = (response[0] << 16) | (response[1] << 8) | response[2]
         if raw & 0x800000:
             raw -= 1 << 24
