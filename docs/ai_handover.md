@@ -19,3 +19,21 @@ In `tools/deploy.ps1` wurde der Deploy-Inhalt korrigiert. Zuerst wurde sichtbar,
 ## 5) Temporäre Befehlsliste angelegt
 
 In `docs/temporary_commands.md` wurde eine reine Copy-Paste-Datei mit den temporären Betriebsbefehlen angelegt: Deploy, Service-Datei prüfen, Service installieren/starten, `sudoers`-Regel setzen und Logs ansehen.
+
+## 6) Tatsächliche Ursache fuer den Service-Fehler
+
+Der Service ist zuletzt nicht an der Python-Logik, sondern am Shell-Launcher `scripts/start_button_logger.sh` gescheitert. Die Datei war mit Windows-Zeilenenden (`CRLF`) gespeichert. Bash auf dem Raspberry Pi hat das Skript deshalb mit `line: invalid option name` abgebrochen, noch bevor Python gestartet wurde.
+
+Wichtig fuer zukuenftige Aenderungen:
+- Shell-Skripte fuer den Pi immer mit LF-Zeilenenden speichern.
+- Nach Aenderungen an `.sh`-Dateien einmal pruefen, ob keine `CRLF`-Zeilenenden mehr drin sind.
+- Wenn ein systemd-Dienst sofort mit Exit-Code 2 endet, zuerst den Launcher und nicht sofort die Python-Optionen pruefen.
+
+## 7) Service-Start robust gemacht
+
+In `deploy/systemd/mtb-telemetry-button.service` wird das Startskript jetzt explizit ueber `/bin/bash` gestartet. Dadurch ist der Dienst nicht mehr davon abhaengig, ob `scripts/start_button_logger.sh` ein executable-Bit hat oder aus dem Windows-Checkout korrekt als ausfuehrbare Datei ankommt.
+
+Zusatzhinweis fuer Deploys von Windows aus:
+- Git kann Shell-Dateien auf dem Pi zwar inhaltlich richtig ausrollen, aber Zeilenenden bleiben trotzdem ein Risiko.
+- Wenn ein `.sh`-Skript als Service-Entry-Point dient, ist eine kurze Byte-/Zeilenenden-Pruefung nach dem Edit sinnvoll.
+- Nach jedem Deploy den Service mit `daemon-reload` und `restart` neu laden, damit die neue Unit und der neue Launcher wirklich aktiv sind.

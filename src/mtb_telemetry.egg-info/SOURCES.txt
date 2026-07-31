@@ -5,6 +5,7 @@ src/analysis/statistics.py
 src/analysis/suspension.py
 src/analysis/velocity.py
 src/mtb_telemetry/__init__.py
+src/mtb_telemetry/logging.py
 src/mtb_telemetry/main.py
 src/mtb_telemetry.egg-info/PKG-INFO
 src/mtb_telemetry.egg-info/SOURCES.txt
@@ -34,3 +35,4 @@ src/utils/__init__.py
 src/utils/filters.py
 src/utils/helpers.py
 tests/test_ads1256.py
+tests/test_logging.py

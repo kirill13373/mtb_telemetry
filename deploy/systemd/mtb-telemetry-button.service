@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/mtb_telemetry
-ExecStart=/home/pi/mtb_telemetry/scripts/start_button_logger.sh
+ExecStart=/bin/bash /home/pi/mtb_telemetry/scripts/start_button_logger.sh
 Restart=always
 RestartSec=2
 Environment=CONTROL_MODE=button

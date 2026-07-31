@@ -16,6 +16,11 @@ PRINT_EVERY="${PRINT_EVERY:-1}"
 
 cd "$PROJECT_DIR"
 
+echo "Starting MTB telemetry logger..." >&2
+echo "CONTROL_MODE='${CONTROL_MODE}' CONTROL_GPIO='${CONTROL_GPIO}' CONTROL_DEBOUNCE_MS='${CONTROL_DEBOUNCE_MS}'" >&2
+echo "SHUTDOWN_GPIO='${SHUTDOWN_GPIO}' SHUTDOWN_DEBOUNCE_MS='${SHUTDOWN_DEBOUNCE_MS}'" >&2
+echo "TARGET_HZ='${TARGET_HZ}' ADC_SAMPLES='${ADC_SAMPLES}' CSV_FLUSH_EVERY='${CSV_FLUSH_EVERY}' PRINT_EVERY='${PRINT_EVERY}'" >&2
+
 common_args=(
   --target-hz "$TARGET_HZ"
   --adc-samples "$ADC_SAMPLES"
@@ -32,11 +37,13 @@ if [[ -n "$SHUTDOWN_GPIO" ]]; then
 fi
 
 if [[ "$CONTROL_MODE" == "switch" ]]; then
+  echo "Exec: $PYTHON_BIN scripts/haltech_two_point_mm.py --switch-gpio $CONTROL_GPIO --switch-debounce-ms $CONTROL_DEBOUNCE_MS ${common_args[*]}" >&2
   exec "$PYTHON_BIN" scripts/haltech_two_point_mm.py \
     --switch-gpio "$CONTROL_GPIO" \
     --switch-debounce-ms "$CONTROL_DEBOUNCE_MS" \
     "${common_args[@]}"
 elif [[ "$CONTROL_MODE" == "button" ]]; then
+  echo "Exec: $PYTHON_BIN scripts/haltech_two_point_mm.py --button-gpio $CONTROL_GPIO --button-debounce-ms $CONTROL_DEBOUNCE_MS ${common_args[*]}" >&2
   exec "$PYTHON_BIN" scripts/haltech_two_point_mm.py \
     --button-gpio "$CONTROL_GPIO" \
     --button-debounce-ms "$CONTROL_DEBOUNCE_MS" \
