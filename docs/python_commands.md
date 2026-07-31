@@ -101,13 +101,20 @@ Verdrahtung (default in Skript):
 - andere Taste-Seite an GND
 - kein externer Widerstand noetig (interner Pull-up wird verwendet)
 
+Zweiter Taster fuer Raspberry Pi Shutdown:
+- eine Taste-Seite an BCM GPIO (Vorschlag: GPIO22)
+- andere Taste-Seite an denselben GND wie der Logging-Taster
+- ebenfalls kein externer Widerstand noetig (interner Pull-up wird verwendet)
+- wichtig: Shutdown-Taster muss an einem anderen GPIO als der Logging-Taster haengen
+
 Startbeispiel:
 
 ```bash
-/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --quiet --target-hz 80
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --quiet --target-hz 80
 ```
 
 Jeder Tastendruck toggelt Logging zwischen AN und AUS.
+Jeder Tastendruck auf den Shutdown-Taster schliesst die aktive Session sauber ab und faehrt den Raspberry Pi herunter.
 
 ## 10) Ohne Terminal-Start: Autostart als systemd-Service
 
@@ -144,12 +151,23 @@ GPIO oder Zielrate anpassen:
 - Fuer momentary Taster:
 	- `Environment=CONTROL_MODE=button`
 	- `Environment=CONTROL_GPIO=27`
+- Fuer den Shutdown-Taster z. B.:
+	- `Environment=SHUTDOWN_GPIO=22`
+	- `Environment=SHUTDOWN_DEBOUNCE_MS=800`
 - z. B. auch `Environment=TARGET_HZ=80`
 - danach neu laden/neustarten:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart mtb-telemetry-button.service
+```
+
+Damit der systemd-Service als User `pi` das Herunterfahren ohne Passwort ausloesen darf, einmalig sudoers-Regel anlegen:
+
+```bash
+echo 'pi ALL=(root) NOPASSWD: /usr/sbin/shutdown, /sbin/shutdown' | sudo tee /etc/sudoers.d/mtb-telemetry-shutdown
+sudo chmod 440 /etc/sudoers.d/mtb-telemetry-shutdown
+sudo visudo -cf /etc/sudoers.d/mtb-telemetry-shutdown
 ```
 
 Hinweis zum eBay-Schalter 127910320644:

@@ -52,6 +52,11 @@ LOG_DIR = Path("data")
 SUFNI_DIR = LOG_DIR / "sufni"
 LOG_FILE_PREFIX = "haltech_travel"
 LOG_FILE = LOG_DIR / "haltech_travel.csv"
+SHUTDOWN_COMMAND_CANDIDATES = (
+    "/usr/sbin/shutdown",
+    "/sbin/shutdown",
+    "shutdown",
+)
 
 
 def build_session_log_file(now_utc: datetime | None = None) -> Path:
@@ -104,6 +109,32 @@ def export_session_to_sufni(input_csv_path: Path) -> None:
             print(exc.stdout.strip())
         if exc.stderr:
             print(exc.stderr.strip())
+
+
+def request_system_shutdown() -> None:
+    """Trigger an orderly Raspberry Pi shutdown via sudo."""
+    last_error: subprocess.CalledProcessError | None = None
+    for executable in SHUTDOWN_COMMAND_CANDIDATES:
+        if "/" in executable and not Path(executable).exists():
+            continue
+
+        command = ["sudo", executable, "-h", "now"]
+        try:
+            subprocess.run(command, check=True)
+            return
+        except FileNotFoundError:
+            continue
+        except subprocess.CalledProcessError as exc:
+            last_error = exc
+            break
+
+    if last_error is not None:
+        raise RuntimeError(
+            "Failed to trigger shutdown. "
+            "Ensure the service user may run shutdown via sudo without a password."
+        ) from last_error
+
+    raise RuntimeError("No shutdown executable found on this system.")
 
 
 class SessionCsvWriter:
@@ -354,6 +385,21 @@ def main() -> None:
         help="Debounce time for --button-gpio in milliseconds (default: 120).",
     )
     parser.add_argument(
+        "--shutdown-button-gpio",
+        type=int,
+        default=None,
+        help=(
+            "Optional BCM GPIO pin for a dedicated shutdown button. "
+            "Pressing it closes the active log cleanly and powers off the Raspberry Pi."
+        ),
+    )
+    parser.add_argument(
+        "--shutdown-button-debounce-ms",
+        type=int,
+        default=800,
+        help="Debounce time for --shutdown-button-gpio in milliseconds (default: 800).",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Disable per-sample terminal output (useful for headless/background operation).",
@@ -399,6 +445,10 @@ def main() -> None:
         parser.error("--csv-flush-every must be at least 1")
     if args.switch_gpio is not None and args.button_gpio is not None:
         parser.error("Use either --switch-gpio or --button-gpio, not both")
+    if args.shutdown_button_gpio is not None and (
+        args.shutdown_button_gpio == args.switch_gpio or args.shutdown_button_gpio == args.button_gpio
+    ):
+        parser.error("--shutdown-button-gpio must be different from the log control GPIO")
 
     target_period_s = 0.0 if args.target_hz == 0 else (1.0 / args.target_hz)
 
@@ -406,6 +456,7 @@ def main() -> None:
     adc.open()
     log_switch: LoggingSwitch | None = None
     log_button: LoggingButton | None = None
+    shutdown_button: LoggingButton | None = None
     last_switch_state: bool | None = None
     button_logging_enabled = bool(args.log)
     prev_logging_enabled = False
@@ -448,11 +499,34 @@ def main() -> None:
         elif args.log:
             print(f"Logging to {LOG_FILE}")
 
+        if args.shutdown_button_gpio is not None:
+            shutdown_button = LoggingButton(
+                args.shutdown_button_gpio,
+                debounce_ms=args.shutdown_button_debounce_ms,
+                active_low=True,
+            )
+            print(f"Shutdown button enabled on BCM GPIO {args.shutdown_button_gpio}.")
+            print("Wire shutdown button between GPIO and GND (internal pull-up active).")
+            print("Pressing it will close the current log and shut down the Raspberry Pi.")
+            print(f"Debounce: {args.shutdown_button_debounce_ms} ms")
+
         def close_active_writer() -> None:
             nonlocal session_writer
             if session_writer is not None:
                 session_writer.close()
                 session_writer = None
+
+        def finalize_active_session() -> None:
+            nonlocal current_log_file, prev_logging_enabled, button_logging_enabled, last_switch_state
+            if current_log_file is None:
+                return
+
+            close_active_writer()
+            export_session_to_sufni(current_log_file)
+            current_log_file = None
+            prev_logging_enabled = False
+            button_logging_enabled = False
+            last_switch_state = False if log_switch is not None else last_switch_state
 
         sample_index = 0
         while True:
@@ -486,9 +560,20 @@ def main() -> None:
                         print("Logging OFF")
                 logging_enabled = button_logging_enabled
 
+            if shutdown_button is not None and shutdown_button.consume_press_event():
+                print("Shutdown button pressed. Finalizing active session...")
+                if current_log_file is not None:
+                    finalize_active_session()
+                try:
+                    request_system_shutdown()
+                except RuntimeError as exc:
+                    print(f"Shutdown request failed: {exc}")
+                else:
+                    print("Shutdown requested.")
+                    break
+
             if prev_logging_enabled and not logging_enabled and current_log_file is not None:
-                close_active_writer()
-                export_session_to_sufni(current_log_file)
+                finalize_active_session()
 
             if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
@@ -514,6 +599,8 @@ def main() -> None:
             log_switch.close()
         if log_button is not None:
             log_button.close()
+        if shutdown_button is not None:
+            shutdown_button.close()
         adc.close()
 
 
