@@ -107,10 +107,17 @@ Zweiter Taster fuer Raspberry Pi Shutdown:
 - ebenfalls kein externer Widerstand noetig (interner Pull-up wird verwendet)
 - wichtig: Shutdown-Taster muss an einem anderen GPIO als der Logging-Taster haengen
 
+Status-LED fuer "Messung laeuft":
+- Vorschlag GPIO: BCM GPIO23 (physischer Pin 16)
+- LED-Anode (langes Bein) -> ueber 220 Ohm bis 470 Ohm Vorwiderstand an GPIO23
+- LED-Kathode (kurzes Bein) -> GND
+- Verhalten: LED AN waehrend Logging aktiv, LED AUS waehrend Logging pausiert
+- nur bei LED-Modulen mit invertierter Logik: `--status-led-active-low` setzen
+
 Startbeispiel:
 
 ```bash
-/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --quiet --target-hz 80
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --status-led-gpio 23 --quiet --target-hz 80
 ```
 
 Jeder Tastendruck toggelt Logging zwischen AN und AUS.
@@ -154,6 +161,9 @@ GPIO oder Zielrate anpassen:
 - Fuer den Shutdown-Taster z. B.:
 	- `Environment=SHUTDOWN_GPIO=22`
 	- `Environment=SHUTDOWN_DEBOUNCE_MS=800`
+- Fuer die Status-LED z. B.:
+	- `Environment=STATUS_LED_GPIO=23`
+	- `Environment=STATUS_LED_ACTIVE_LOW=0`
 - z. B. auch `Environment=TARGET_HZ=80`
 - danach neu laden/neustarten:
 

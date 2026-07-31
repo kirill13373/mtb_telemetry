@@ -264,6 +264,33 @@ class LoggingButton:
         GPIO.cleanup(self.gpio_pin)
 
 
+class StatusLed:
+    """GPIO-backed status LED that reflects measurement logging state."""
+
+    def __init__(self, gpio_pin: int, active_high: bool = True) -> None:
+        if GPIO is None:
+            raise RuntimeError(
+                "RPi.GPIO is not available. Install python3-rpi.gpio or run on Raspberry Pi."
+            )
+
+        self.gpio_pin = gpio_pin
+        self.active_high = active_high
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.gpio_pin, GPIO.OUT, initial=GPIO.LOW)
+        self.set_enabled(False)
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Set LED state; True means measurement logging is active."""
+        output_high = enabled if self.active_high else (not enabled)
+        GPIO.output(self.gpio_pin, GPIO.HIGH if output_high else GPIO.LOW)
+
+    def close(self) -> None:
+        """Turn LED off and release only this GPIO pin."""
+        self.set_enabled(False)
+        GPIO.cleanup(self.gpio_pin)
+
+
 def sample_voltage(adc: ADS1256, sample_count: int = 40, channel: int = 0) -> float:
     """Return a stable voltage estimate using median of sampled readings."""
     values: list[float] = []
@@ -400,6 +427,20 @@ def main() -> None:
         help="Debounce time for --shutdown-button-gpio in milliseconds (default: 800).",
     )
     parser.add_argument(
+        "--status-led-gpio",
+        type=int,
+        default=None,
+        help=(
+            "Optional BCM GPIO pin for a status LED. "
+            "LED is ON while measurement logging is active and OFF otherwise."
+        ),
+    )
+    parser.add_argument(
+        "--status-led-active-low",
+        action="store_true",
+        help="Invert LED output logic for active-low LED modules.",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Disable per-sample terminal output (useful for headless/background operation).",
@@ -449,6 +490,12 @@ def main() -> None:
         args.shutdown_button_gpio == args.switch_gpio or args.shutdown_button_gpio == args.button_gpio
     ):
         parser.error("--shutdown-button-gpio must be different from the log control GPIO")
+    if args.status_led_gpio is not None and args.status_led_gpio in {
+        args.switch_gpio,
+        args.button_gpio,
+        args.shutdown_button_gpio,
+    }:
+        parser.error("--status-led-gpio must be different from button/switch GPIOs")
 
     target_period_s = 0.0 if args.target_hz == 0 else (1.0 / args.target_hz)
 
@@ -457,6 +504,7 @@ def main() -> None:
     log_switch: LoggingSwitch | None = None
     log_button: LoggingButton | None = None
     shutdown_button: LoggingButton | None = None
+    status_led: StatusLed | None = None
     last_switch_state: bool | None = None
     button_logging_enabled = bool(args.log)
     prev_logging_enabled = False
@@ -509,6 +557,15 @@ def main() -> None:
             print("Wire shutdown button between GPIO and GND (internal pull-up active).")
             print("Pressing it will close the current log and shut down the Raspberry Pi.")
             print(f"Debounce: {args.shutdown_button_debounce_ms} ms")
+
+        if args.status_led_gpio is not None:
+            status_led = StatusLed(
+                args.status_led_gpio,
+                active_high=not args.status_led_active_low,
+            )
+            print(f"Status LED enabled on BCM GPIO {args.status_led_gpio}.")
+            print("LED is ON while logging is active and OFF while paused.")
+            print(f"Output mode: {'active-low' if args.status_led_active_low else 'active-high'}")
 
         def close_active_writer() -> None:
             nonlocal session_writer
@@ -575,6 +632,9 @@ def main() -> None:
             if prev_logging_enabled and not logging_enabled and current_log_file is not None:
                 finalize_active_session()
 
+            if status_led is not None:
+                status_led.set_enabled(logging_enabled)
+
             if logging_enabled:
                 timestamp = datetime.now(timezone.utc).isoformat()
                 if current_log_file is None:
@@ -601,6 +661,8 @@ def main() -> None:
             log_button.close()
         if shutdown_button is not None:
             shutdown_button.close()
+        if status_led is not None:
+            status_led.close()
         adc.close()
 
 
