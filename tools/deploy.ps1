@@ -22,7 +22,7 @@ $DeploymentItems = @(
     "config",
     "calibration",
     "scripts",
-    "deploy/systemd",
+    "deploy",
     "pyproject.toml",
     "README.md"
 )
