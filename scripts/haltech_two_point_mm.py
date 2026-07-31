@@ -76,7 +76,10 @@ def build_sufni_output_paths(input_csv_path: Path) -> tuple[Path, Path]:
     return output_csv, output_meta
 
 
-def export_session_to_sufni(input_csv_path: Path) -> None:
+def export_session_to_sufni(
+    input_csv_path: Path,
+    session_start_utc: datetime | None = None,
+) -> None:
     """Run the Sufni export script for one recorded session CSV."""
     if not input_csv_path.exists() or input_csv_path.stat().st_size == 0:
         print(f"Skip Sufni export (no data): {input_csv_path}")
@@ -98,6 +101,11 @@ def export_session_to_sufni(input_csv_path: Path) -> None:
         "--metadata",
         str(output_meta),
     ]
+    if session_start_utc is not None:
+        command += [
+            "--session-start-utc",
+            session_start_utc.isoformat().replace("+00:00", "Z"),
+        ]
 
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True)
@@ -659,18 +667,25 @@ def main() -> None:
 
             close_active_writer()
             write_metrics_if_enabled("session_finalized")
-            export_session_to_sufni(current_log_file)
+            export_session_to_sufni(current_log_file, session_start_utc=acquisition_start_utc)
             current_log_file = None
             prev_logging_enabled = False
             button_logging_enabled = False
             last_switch_state = False if log_switch is not None else last_switch_state
 
+        # Spinwait threshold: sleep for (remaining - SPINWAIT_S), then busy-wait
+        # for the last slice.  This avoids OS scheduler overshoot (~0.07 ms on Pi)
+        # that prevents time.sleep() alone from reaching 500 Hz.
+        SPINWAIT_S = 0.0008  # 0.8 ms: safe margin above max observed loop work
+
         sample_index = 0
+        next_deadline = 0.0  # initialised on first iteration
         while True:
             loop_started = time.monotonic()
             if acquisition_start_monotonic is None:
                 acquisition_start_monotonic = loop_started
                 acquisition_start_utc = datetime.now(timezone.utc)
+                next_deadline = loop_started
 
             if last_loop_started is not None:
                 loop_interval = loop_started - last_loop_started
@@ -730,12 +745,20 @@ def main() -> None:
                 status_led.set_enabled(logging_enabled)
 
             if logging_enabled:
-                timestamp = datetime.now(timezone.utc).isoformat()
+                # Store monotonic offset from session start instead of
+                # formatting a UTC ISO string per sample (expensive in hot path).
+                # UTC timestamps are reconstructed during export.
                 if current_log_file is None:
                     current_log_file = build_session_log_file()
                 if session_writer is None:
                     session_writer = SessionCsvWriter(current_log_file, flush_every=args.csv_flush_every)
-                session_writer.append(timestamp=timestamp, raw=raw, voltage=voltage, travel_mm=travel_mm)
+                mono_offset_s = loop_started - acquisition_start_monotonic
+                session_writer.append(
+                    timestamp=f"{mono_offset_s:.6f}",
+                    raw=raw,
+                    voltage=voltage,
+                    travel_mm=travel_mm,
+                )
                 logged_sample_count += 1
 
             loop_elapsed = time.monotonic() - loop_started
@@ -743,14 +766,22 @@ def main() -> None:
                 loop_elapsed_max_s = loop_elapsed
 
             if target_period_s > 0.0:
-                remaining = target_period_s - loop_elapsed
-                if remaining > 0.0:
-                    time.sleep(remaining)
-                else:
+                next_deadline += target_period_s
+                now = time.monotonic()
+                sleep_s = next_deadline - now - SPINWAIT_S
+                if sleep_s > 0.0:
+                    time.sleep(sleep_s)
+                # Spinwait for the remaining slice (SPINWAIT_S window)
+                while time.monotonic() < next_deadline:
+                    pass
+                # Deadline overrun check
+                overrun_s = time.monotonic() - next_deadline
+                if overrun_s > 0.001:  # only count meaningful overruns (> 1 ms)
                     loop_overrun_count += 1
-                    overrun_s = -remaining
                     if overrun_s > loop_overrun_max_s:
                         loop_overrun_max_s = overrun_s
+                    # Re-sync deadline to avoid cascading overruns
+                    next_deadline = time.monotonic()
             prev_logging_enabled = logging_enabled
     except KeyboardInterrupt:
         print("\nStopped.")
@@ -789,7 +820,7 @@ def main() -> None:
         if session_writer is not None:
             session_writer.close()
         if prev_logging_enabled and current_log_file is not None:
-            export_session_to_sufni(current_log_file)
+            export_session_to_sufni(current_log_file, session_start_utc=acquisition_start_utc)
         if log_switch is not None:
             log_switch.close()
         if log_button is not None:

@@ -4,6 +4,13 @@
 Input (default): data/haltech_travel.csv
 Expected columns: timestamp, raw, voltage, travel_mm
 
+Timestamp column format (both are accepted):
+  - ISO-8601 UTC string (legacy):   2026-07-31T09:15:13.123456+00:00
+  - Monotonic offset in seconds (new):  0.000000  / 1.234567
+    When using monotonic offsets, pass --session-start-utc with the
+    run_started_utc value from last_run_metrics.json to produce correct
+    absolute UTC times in the output metadata.
+
 Output CSV (semicolon-separated): Time;Fork;Shock
 - Time: seconds since session start (t=0)
 - Fork: normalized fork travel (0..1), defaults to 0.0 when no fork sensor exists
@@ -33,8 +40,33 @@ def _parse_iso_utc(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, value))
+def _is_monotonic_offset(value: str) -> bool:
+    """Return True when the timestamp column holds a plain decimal offset (seconds)."""
+    try:
+        float(value.strip())
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_timestamp(value: str, session_start_utc: datetime | None) -> tuple[float, datetime | None]:
+    """Return (relative_seconds, utc_datetime_or_None) from a timestamp cell.
+
+    Supports both ISO-8601 UTC strings and plain monotonic-offset floats.
+    For monotonic offsets, utc_datetime is reconstructed from session_start_utc
+    when available; otherwise None is returned for the utc field.
+    """
+    if _is_monotonic_offset(value):
+        offset_s = float(value.strip())
+        if session_start_utc is not None:
+            from datetime import timedelta
+            utc_dt = session_start_utc + timedelta(seconds=offset_s)
+        else:
+            utc_dt = None
+        return offset_s, utc_dt
+    else:
+        utc_dt = _parse_iso_utc(value)
+        return None, utc_dt  # relative time will be computed later
 
 
 def _estimate_rate_hz(times_s: list[float]) -> float | None:
@@ -56,11 +88,12 @@ def convert(
     metadata_path: Path,
     fork_value: float,
     invert_shock_from_mm: bool,
+    session_start_utc: datetime | None = None,
 ) -> None:
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    records: list[tuple[datetime, float]] = []
+    records: list[tuple[float | None, datetime | None, float]] = []
     with input_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         required = {"timestamp", "travel_mm"}
@@ -71,19 +104,34 @@ def convert(
             )
 
         for row in reader:
-            timestamp = _parse_iso_utc(row["timestamp"])
+            offset_s, utc_dt = _parse_timestamp(row["timestamp"], session_start_utc)
             travel_mm = float(row["travel_mm"])
-            records.append((timestamp, travel_mm))
+            records.append((offset_s, utc_dt, travel_mm))
 
     if not records:
         raise ValueError("Input CSV contains no data rows.")
 
-    start_utc = records[0][0]
+    # Determine time source and session start UTC
+    first_offset, first_utc, _ = records[0]
+    uses_monotonic = first_offset is not None
+    if uses_monotonic:
+        # Timestamps are already relative offsets; session start comes from metadata
+        time_source = "monotonic offset (reconstructed from run_started_utc)"
+        resolved_start_utc = session_start_utc
+    else:
+        # Legacy ISO-UTC timestamps
+        time_source = "RTC-backed system clock (UTC)"
+        resolved_start_utc = first_utc
+
     times_s: list[float] = []
     output_rows: list[dict[str, str]] = []
 
-    for timestamp, travel_mm in records:
-        rel_s = (timestamp - start_utc).total_seconds()
+    for offset_s, utc_dt, travel_mm in records:
+        if uses_monotonic:
+            rel_s = offset_s  # type: ignore[arg-type]
+        else:
+            assert utc_dt is not None and resolved_start_utc is not None
+            rel_s = (utc_dt - resolved_start_utc).total_seconds()
         times_s.append(rel_s)
 
         # haltech_two_point_mm stores 0..100 mm where 0 mm is compressed and
@@ -110,13 +158,15 @@ def convert(
     sample_rate_hz = _estimate_rate_hz(times_s)
 
     metadata = {
-        "session_start_utc": start_utc.isoformat().replace("+00:00", "Z"),
+        "session_start_utc": None
+        if resolved_start_utc is None
+        else resolved_start_utc.isoformat().replace("+00:00", "Z"),
         "source_csv": str(input_path),
         "sufni_csv": str(output_path),
         "samples": len(output_rows),
         "duration_s": round(duration_s, 6),
         "estimated_sample_rate_hz": None if sample_rate_hz is None else round(sample_rate_hz, 3),
-        "time_source": "RTC-backed system clock (UTC)",
+        "time_source": time_source,
         "notes": "Use session_start_utc as Start time in Sufni import dialog.",
     }
 
@@ -151,6 +201,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Metadata JSON output path (default: data/session_sufni_meta.json)",
     )
     parser.add_argument(
+        "--session-start-utc",
+        type=str,
+        default=None,
+        help=(
+            "Session start time in ISO-8601 UTC format. Required when the CSV uses "
+            "monotonic offsets instead of ISO timestamps. "
+            "Use run_started_utc from last_run_metrics.json."
+        ),
+    )
+    parser.add_argument(
         "--fork-value",
         type=float,
         default=0.0,
@@ -167,12 +227,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+    session_start_utc: datetime | None = None
+    if args.session_start_utc is not None:
+        session_start_utc = _parse_iso_utc(args.session_start_utc)
     convert(
         input_path=args.input,
         output_path=args.output,
         metadata_path=args.metadata,
         fork_value=args.fork_value,
         invert_shock_from_mm=not args.no_invert_shock,
+        session_start_utc=session_start_utc,
     )
 
 

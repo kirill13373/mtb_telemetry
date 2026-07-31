@@ -129,3 +129,37 @@ Zusammen mit SPI-Overhead und Python-Laufzeit ergab das ~2.069 ms statt 2.000 ms
 ### Naechster Schritt
 Deploy ausfuehren und einen neuen Benchmark-Lauf gemaess `500hz_next_steps.md` starten.
 Vergleich: `effective_loop_hz` neu gegen den Referenzwert 483 Hz aus dieser Messung.
+
+## Update: Analyse Benchmark nach ADS-Aenderung + neue Implementierung
+
+### Diagnose: Warum der ADS-Fix keine Wirkung hatte
+Die Messung zeigt: rate vorher 483.4 Hz, nachher 482.9 Hz. Kein Unterschied.
+
+Das `sleep(0.0012)` in `read_adc_raw` war nicht der Engpass, weil es mit dem
+aeusseren `time.sleep(remaining)` zusammen zu einem Gesamtsleep von ~1.22 ms fuehrte.
+Die 0.071 ms Abweichung kommt vom Linux-Scheduler selbst:
+- `max_loop_elapsed_s = 0.000778` → eigentliche Arbeit = 0.78 ms
+- `target_period_s = 0.002000`
+- `remaining = 0.002000 - 0.000778 = 0.001222` → sleep(1.222 ms)
+- OS-Overshoot auf Pi: ~0.071 ms pro sleep() = 5.8% Verlust
+
+### Implementierte Loesung: Deadline-Loop mit Hybrid-Sleep + Spinwait
+Jeder `time.sleep()` ueberschiesst auf Linux leicht.
+Die Loesung: schlafen fuer `(remaining - 0.8 ms)`, dann Spinwait fuer die letzten 0.8 ms.
+
+Aenderungen in `scripts/haltech_two_point_mm.py`:
+- Deadline-basierter Loop: `next_deadline += target_period_s` statt `sleep(remaining)`.
+- Hybrid-Pacing: `sleep(deadline - now - 0.8 ms)` dann `while monotonic() < deadline: pass`.
+- Per-Sample UTC-ISO-Stringerzeugung entfernt (Phase B): statt `datetime.now().isoformat()`
+  wird `loop_started - acquisition_start_monotonic` als Offset in Sekunden gespeichert.
+  Das spart ~15-30 µs pro Sample aus dem Hot Path.
+
+Aenderungen in `scripts/export_sufni_csv.py`:
+- Liest jetzt beide Zeitstempel-Formate: ISO-UTC (Legacy) und Dezimal-Offset (neu).
+- Neues Argument `--session-start-utc` fuer UTC-Rekonstruktion aus `last_run_metrics.json`.
+- Interner Export-Aufruf gibt `acquisition_start_utc` automatisch mit.
+
+### Erwartetes Ergebnis nach naechstem Benchmark
+- effective_loop_hz deutlich naeher 500 (Ziel: >= 497)
+- mean_loop_interval_ms nahe 2.000 ms
+- loop_overruns stabil niedrig
