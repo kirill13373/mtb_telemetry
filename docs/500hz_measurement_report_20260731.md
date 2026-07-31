@@ -202,3 +202,49 @@ Aenderungen in `scripts/export_sufni_csv.py`:
 - **500 Hz Ziel: erreicht** (effective_loop_hz 500.04, Overruns 0, Jitter < 0.04 ms).
 - Export-Bug (`_clamp01`) behoben; `export_sufni_csv.py` kompiliert fehlerfrei.
 - Naechster Vergleichslauf sollte den Sufni-Export implizit validieren.
+
+## KI-Uebergabe: Diagnose-Zusammenfassung
+
+### Sicher verifiziert
+- Das Poti liefert Spannung am ADS-Eingang: ca. 2.5 V bei mittlerer Stellung.
+- 3.3 V ist vorhanden und korrekt.
+- 5 V ist vorhanden und liegt bei ca. 5.2 V.
+- VREF ist vorhanden und liegt ebenfalls bei ca. 5.2 V.
+- AGND liegt bei 0 V.
+- Der 500-Hz-Timingpfad funktioniert inzwischen: im letzten Benchmark wurden 500.04 Hz erreicht.
+
+### Reproduzierter Fehler
+- Die Messdaten bleiben trotzdem konstant 0:
+  - raw nur 0
+  - voltage nur 0.0
+  - travel_mm nur 0.0
+- Das gilt fuer mehrere CSVs und mehrere Testlaeufe.
+- Der ADS-Quickcheck liefert ebenfalls nur 0 bei Status/Readback.
+
+### Bereits getestete Gegenchecks
+- Alle ADS-Kanaele 0-7 gelesen: nur 0.
+- SPI-Bus bei 50 kHz bis 1 MHz getestet: immer nur Nullen.
+- beide SPI-Devices (`spidev0.0` und `spidev0.1`) ausprobiert: kein Unterschied.
+- SPI-Mode 0..3 getestet: kein Unterschied.
+- Digitale Steuerpins des Projekts sind 22, 23, 27; sie kollidieren nicht mit SPI.
+
+### Treiber-Fix, der keinen Unterschied gemacht hat
+- Register- und Datenlesen wurden in `src/mtb_telemetry/sensors/ads1256.py` auf eine zusammenhaengende SPI-Transaktion umgestellt.
+- Trotz des Fixes bleibt der ADC-Ausgang auf 0.
+
+### Wahrscheinlichste Ursache
+- Kein GPIO-Mehrfachnutzungsproblem.
+- Sehr wahrscheinlich ein Hardware-/Busproblem auf der ADS-Seite:
+  - MISO/DOUT Leitung
+  - CS / Chip-Select
+  - ADS-Digitalteil / Board-Anbindung
+  - moeglicherweise Reset/PWDN oder Board-spezifische Beschaltung
+
+### Messpunkt-Empfehlung fuer die naechste Diagnose
+1. CS gegen GND pruefen.
+2. DOUT/MISO gegen GND pruefen.
+3. Falls moeglich Board-Modell/Pinbelegung exakt bestaetigen.
+4. Wenn das Board einen separaten Reset- oder PWDN-Pin hat, dessen Pegel pruefen.
+
+### Kurzfazit fuer die andere KI
+Die Analogseite bis zum ADS-Eingang sieht gut aus. Das Messproblem sitzt sehr wahrscheinlich im digitalen ADS-Pfad oder im Board/Pin-Mapping, nicht im Poti und nicht in den Projekt-GPIOs.
