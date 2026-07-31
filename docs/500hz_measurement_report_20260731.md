@@ -196,3 +196,9 @@ Aenderungen in `scripts/export_sufni_csv.py`:
   - `NameError: name '_clamp01' is not defined`
   - Quelle laut Traceback: `scripts/export_sufni_csv.py`
 - Die Messung selbst und Metrics-JSON wurden trotzdem korrekt geschrieben.
+
+## Abschlussstatus (2026-07-31)
+
+- **500 Hz Ziel: erreicht** (effective_loop_hz 500.04, Overruns 0, Jitter < 0.04 ms).
+- Export-Bug (`_clamp01`) behoben; `export_sufni_csv.py` kompiliert fehlerfrei.
+- Naechster Vergleichslauf sollte den Sufni-Export implizit validieren.
