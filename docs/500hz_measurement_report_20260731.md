@@ -163,3 +163,36 @@ Aenderungen in `scripts/export_sufni_csv.py`:
 - effective_loop_hz deutlich naeher 500 (Ziel: >= 497)
 - mean_loop_interval_ms nahe 2.000 ms
 - loop_overruns stabil niedrig
+
+## Retest: Aktueller Stand nach neuer Aenderung (2026-07-31)
+
+### Testaufbau
+- Neuer Code deployt.
+- Service kurz gestoppt.
+- 20s Benchmark im Vordergrund ausgefuehrt:
+  - `--log --target-hz 500 --adc-samples 1 --csv-flush-every 200 --quiet`
+  - `--session-metrics-json /home/pi/mtb_telemetry/data/bench_500hz_metrics_after_ads_v2.json`
+- Service danach wieder gestartet (Status: `active`).
+
+### Ergebnis aus bench_500hz_metrics_after_ads_v2.json
+- samples_total: 9859
+- samples_logged: 9859
+- duration_s: 19.717
+- effective_loop_hz: 500.04
+- loop_overruns: 0
+- max_overrun_ms: 0.000
+- max_loop_elapsed_ms: 0.712
+- mean_loop_interval_ms: 2.000
+- min_loop_interval_ms: 1.961
+- max_loop_interval_ms: 2.039
+
+### Bewertung
+- Die neue Revision trifft das 500-Hz-Ziel im Benchmark praktisch exakt.
+- Keine Overruns im Lauf.
+- Loop-Zeiten sind eng und stabil.
+
+### Neuer Befund (nicht blockierend fuer Rate, aber Fehler)
+- Sufni-Export ist im Benchmark fehlgeschlagen mit:
+  - `NameError: name '_clamp01' is not defined`
+  - Quelle laut Traceback: `scripts/export_sufni_csv.py`
+- Die Messung selbst und Metrics-JSON wurden trotzdem korrekt geschrieben.

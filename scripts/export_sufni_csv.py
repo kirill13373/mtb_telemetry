@@ -30,6 +30,15 @@ from pathlib import Path
 from statistics import median
 
 
+def _clamp01(value: float) -> float:
+    """Clamp a numeric value to the inclusive range [0.0, 1.0]."""
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
 def _parse_iso_utc(value: str) -> datetime:
     text = value.strip()
     if text.endswith("Z"):
