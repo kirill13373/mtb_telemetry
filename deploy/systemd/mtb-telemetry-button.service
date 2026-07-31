@@ -17,6 +17,7 @@ Environment=SHUTDOWN_GPIO=22
 Environment=SHUTDOWN_DEBOUNCE_MS=800
 Environment=STATUS_LED_GPIO=23
 Environment=STATUS_LED_ACTIVE_LOW=0
+Environment=SESSION_METRICS_JSON=/home/pi/mtb_telemetry/data/last_run_metrics.json
 Environment=TARGET_HZ=500
 Environment=ADC_SAMPLES=1
 Environment=CSV_FLUSH_EVERY=200

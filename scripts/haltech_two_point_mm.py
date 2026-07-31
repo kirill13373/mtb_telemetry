@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
@@ -135,6 +136,12 @@ def request_system_shutdown() -> None:
         ) from last_error
 
     raise RuntimeError("No shutdown executable found on this system.")
+
+
+def write_metrics_report(path: Path, payload: dict[str, object]) -> None:
+    """Persist runtime metrics for benchmark comparisons."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 class SessionCsvWriter:
@@ -475,6 +482,15 @@ def main() -> None:
         default=120,
         help="Flush CSV after N rows (default: 120).",
     )
+    parser.add_argument(
+        "--session-metrics-json",
+        type=Path,
+        default=None,
+        help=(
+            "Optional output path for runtime metrics JSON. "
+            "Useful for repeatable 500 Hz benchmark runs."
+        ),
+    )
     args = parser.parse_args()
     if args.print_every < 1:
         parser.error("--print-every must be at least 1")
@@ -510,6 +526,17 @@ def main() -> None:
     prev_logging_enabled = False
     current_log_file: Path | None = None
     session_writer: SessionCsvWriter | None = None
+    acquisition_start_monotonic: float | None = None
+    acquisition_start_utc: datetime | None = None
+    last_loop_started: float | None = None
+    loop_interval_sum_s = 0.0
+    loop_interval_count = 0
+    loop_interval_min_s: float | None = None
+    loop_interval_max_s = 0.0
+    loop_elapsed_max_s = 0.0
+    loop_overrun_count = 0
+    loop_overrun_max_s = 0.0
+    logged_sample_count = 0
 
     try:
         adc.initialize_single_ended(enable_input_buffer=False)
@@ -588,6 +615,20 @@ def main() -> None:
         sample_index = 0
         while True:
             loop_started = time.monotonic()
+            if acquisition_start_monotonic is None:
+                acquisition_start_monotonic = loop_started
+                acquisition_start_utc = datetime.now(timezone.utc)
+
+            if last_loop_started is not None:
+                loop_interval = loop_started - last_loop_started
+                loop_interval_sum_s += loop_interval
+                loop_interval_count += 1
+                if loop_interval_min_s is None or loop_interval < loop_interval_min_s:
+                    loop_interval_min_s = loop_interval
+                if loop_interval > loop_interval_max_s:
+                    loop_interval_max_s = loop_interval
+            last_loop_started = loop_started
+
             raw = adc.read_adc_raw_stable(channel=0, samples=args.adc_samples)
             voltage = adc.raw_to_voltage(raw, vref=5.0, pga=1)
             travel_mm = to_mm(voltage, v_zero, v_hundred)
@@ -642,15 +683,88 @@ def main() -> None:
                 if session_writer is None:
                     session_writer = SessionCsvWriter(current_log_file, flush_every=args.csv_flush_every)
                 session_writer.append(timestamp=timestamp, raw=raw, voltage=voltage, travel_mm=travel_mm)
+                logged_sample_count += 1
+
+            loop_elapsed = time.monotonic() - loop_started
+            if loop_elapsed > loop_elapsed_max_s:
+                loop_elapsed_max_s = loop_elapsed
+
             if target_period_s > 0.0:
-                elapsed = time.monotonic() - loop_started
-                remaining = target_period_s - elapsed
+                remaining = target_period_s - loop_elapsed
                 if remaining > 0.0:
                     time.sleep(remaining)
+                else:
+                    loop_overrun_count += 1
+                    overrun_s = -remaining
+                    if overrun_s > loop_overrun_max_s:
+                        loop_overrun_max_s = overrun_s
             prev_logging_enabled = logging_enabled
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        run_ended_utc = datetime.now(timezone.utc)
+        duration_s = 0.0
+        effective_loop_hz = 0.0
+        if acquisition_start_monotonic is not None:
+            duration_s = max(0.0, time.monotonic() - acquisition_start_monotonic)
+        if duration_s > 0.0 and sample_index > 0:
+            effective_loop_hz = sample_index / duration_s
+
+        mean_loop_interval_s: float | None = None
+        if loop_interval_count > 0:
+            mean_loop_interval_s = loop_interval_sum_s / loop_interval_count
+
+        print("Run metrics:")
+        print(f"  samples_total: {sample_index}")
+        print(f"  samples_logged: {logged_sample_count}")
+        print(f"  duration_s: {duration_s:.3f}")
+        if effective_loop_hz > 0.0:
+            print(f"  effective_loop_hz: {effective_loop_hz:.2f}")
+        if target_period_s > 0.0:
+            print(f"  target_hz: {args.target_hz:.3f}")
+        print(f"  loop_overruns: {loop_overrun_count}")
+        print(f"  max_overrun_ms: {loop_overrun_max_s * 1000.0:.3f}")
+        print(f"  max_loop_elapsed_ms: {loop_elapsed_max_s * 1000.0:.3f}")
+        if mean_loop_interval_s is not None:
+            print(f"  mean_loop_interval_ms: {mean_loop_interval_s * 1000.0:.3f}")
+            if loop_interval_min_s is not None:
+                print(f"  min_loop_interval_ms: {loop_interval_min_s * 1000.0:.3f}")
+            print(f"  max_loop_interval_ms: {loop_interval_max_s * 1000.0:.3f}")
+
+        metrics_payload: dict[str, object] = {
+            "run_started_utc": None
+            if acquisition_start_utc is None
+            else acquisition_start_utc.isoformat().replace("+00:00", "Z"),
+            "run_ended_utc": run_ended_utc.isoformat().replace("+00:00", "Z"),
+            "target_hz": args.target_hz,
+            "adc_samples": args.adc_samples,
+            "csv_flush_every": args.csv_flush_every,
+            "samples_total": sample_index,
+            "samples_logged": logged_sample_count,
+            "duration_s": round(duration_s, 6),
+            "effective_loop_hz": round(effective_loop_hz, 6),
+            "loop_overruns": loop_overrun_count,
+            "max_overrun_s": round(loop_overrun_max_s, 6),
+            "max_loop_elapsed_s": round(loop_elapsed_max_s, 6),
+            "mean_loop_interval_s": None
+            if mean_loop_interval_s is None
+            else round(mean_loop_interval_s, 6),
+            "min_loop_interval_s": None
+            if loop_interval_min_s is None
+            else round(loop_interval_min_s, 6),
+            "max_loop_interval_s": round(loop_interval_max_s, 6),
+            "logging_mode": "switch"
+            if args.switch_gpio is not None
+            else ("button" if args.button_gpio is not None else "always_on"),
+        }
+
+        if args.session_metrics_json is not None:
+            try:
+                write_metrics_report(args.session_metrics_json, metrics_payload)
+                print(f"Metrics written: {args.session_metrics_json}")
+            except OSError as exc:
+                print(f"Failed to write metrics file: {exc}")
+
         if session_writer is not None:
             session_writer.close()
         if prev_logging_enabled and current_log_file is not None:

@@ -120,6 +120,15 @@ Startbeispiel:
 /home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --status-led-gpio 23 --quiet --target-hz 80
 ```
 
+500-Hz Benchmark mit Laufzeit-Metriken (JSON-Report):
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 27 --shutdown-button-gpio 22 --status-led-gpio 23 --target-hz 500 --adc-samples 1 --session-metrics-json data/bench_500hz_metrics.json
+```
+
+Beim Beenden (Ctrl+C oder Service-Stop) werden Kennzahlen wie effektive Hz,
+Overruns, max. Loop-Zeit und Sample-Anzahl in die JSON-Datei geschrieben.
+
 Jeder Tastendruck toggelt Logging zwischen AN und AUS.
 Jeder Tastendruck auf den Shutdown-Taster schliesst die aktive Session sauber ab und faehrt den Raspberry Pi herunter.
 
@@ -164,6 +173,8 @@ GPIO oder Zielrate anpassen:
 - Fuer die Status-LED z. B.:
 	- `Environment=STATUS_LED_GPIO=23`
 	- `Environment=STATUS_LED_ACTIVE_LOW=0`
+- Fuer Laufzeit-Metriken z. B.:
+	- `Environment=SESSION_METRICS_JSON=/home/pi/mtb_telemetry/data/last_run_metrics.json`
 - z. B. auch `Environment=TARGET_HZ=80`
 - danach neu laden/neustarten:
 
