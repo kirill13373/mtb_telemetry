@@ -78,3 +78,22 @@ Die zweite Messung wurde mit aktivem SESSION_METRICS_JSON erfasst. Die Datei
 
 ### Aktualisiertes Fazit
 Metrics-JSON ist jetzt funktionsfaehig im Service-Betrieb. Die 500-Hz-Schleife laeuft stabil, aber weiterhin leicht unter Soll (typisch ~483 Hz).
+
+## Phase B/F Fix: ADS1256-Treiber entlastet (2026-07-31)
+
+### Ursache des 17-Hz-Defizits
+Das feste `time.sleep(0.0012)` in `read_adc_raw` hat 1.2 ms pro Sample erzwungen.
+Zusammen mit SPI-Overhead und Python-Laufzeit ergab das ~2.069 ms statt 2.000 ms.
+
+### Umgesetzte Aenderungen in `src/mtb_telemetry/sensors/ads1256.py`
+- `sleep(0.0012)` aus `read_adc_raw` entfernt. Timing uebernimmt ab sofort der aeussere Loop (`target_period_s`).
+- ADC-Datenrate von 1000 SPS auf 2000 SPS erhoeht (neues Konstante `DRATE_2000_SPS = 0xB0`). Bei 2000 SPS liegt eine frische Wandlung alle 0.5 ms bereit, 4x schneller als die 2-ms-Leserate.
+
+### Erwartetes Ergebnis nach Vergleichslauf
+- effective_loop_hz soll nahe 500 liegen (Ziel: >= 497)
+- mean_loop_interval_ms soll nahe 2.000 ms liegen
+- loop_overruns sollen stabil niedrig bleiben (Referenz: 1 in 40s)
+
+### Naechster Schritt
+Deploy ausfuehren und einen neuen Benchmark-Lauf gemaess `500hz_next_steps.md` starten.
+Vergleich: `effective_loop_hz` neu gegen den Referenzwert 483 Hz aus dieser Messung.

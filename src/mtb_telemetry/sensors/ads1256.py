@@ -29,6 +29,7 @@ class ADS1256:
     COMMAND_RREG = 0x10
     COMMAND_WREG = 0x50
     DRATE_1000_SPS = 0xA1
+    DRATE_2000_SPS = 0xB0
 
     def __init__(self, bus: int = 0, device: int = 0) -> None:
         self.spi = spidev.SpiDev()
@@ -139,8 +140,10 @@ class ADS1256:
         self.write_register(self.STATUS_REGISTER_ADDRESS, [status_value])
         # ADCON: clock out off, sensor detect off, PGA=1.
         self.write_register(self.ADCON_REGISTER_ADDRESS, [0x00])
-        # DRATE: 1000 samples per second as stable default for first tests.
-        self.write_register(self.DRATE_REGISTER_ADDRESS, [self.DRATE_1000_SPS])
+        # DRATE: 2000 SPS gives a fresh conversion every 0.5 ms.
+        # At a 500 Hz read rate (2 ms loop) this ensures a new sample is always
+        # ready and removes the need for a fixed pacing sleep inside read_adc_raw.
+        self.write_register(self.DRATE_REGISTER_ADDRESS, [self.DRATE_2000_SPS])
         # Allow auto-calibration/filter to settle before first channel reads.
         time.sleep(0.05)
         self._selected_channel = None
@@ -166,8 +169,10 @@ class ADS1256:
             time.sleep(0.00005)
             self.transfer([0xFF, 0xFF, 0xFF])
 
-        # Pace reads close to configured data rate (1000 SPS default).
-        time.sleep(0.0012)
+        # No pacing sleep here: the outer loop (target_period_s) handles the
+        # 2 ms inter-sample cadence.  At 2000 SPS the ADC produces a fresh
+        # conversion every 0.5 ms, so a new result is always ready by the time
+        # we issue RDATA.
 
         # ADS1256 RDATA is a two-step transaction:
         # 1) Send RDATA command
