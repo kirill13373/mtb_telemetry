@@ -580,19 +580,19 @@ def main() -> None:
     parser.add_argument(
         "--target-hz",
         type=float,
-        default=20.0,
+        default=500.0,
         help=(
-            "Target loop rate in Hz (default: 20). "
+            "Target loop rate in Hz (default: 500). "
             "Set to 0 for maximum speed without extra pacing."
         ),
     )
     parser.add_argument(
         "--adc-samples",
         type=int,
-        default=7,
+        default=1,
         help=(
-            "Median sample count per point (default: 7). "
-            "Use 1 for highest possible rate (e.g. 500 Hz target)."
+            "Median sample count per point (default: 1). "
+            "Use 1 for highest possible rate at 500 Hz target."
         ),
     )
     parser.add_argument(
@@ -637,6 +637,8 @@ def main() -> None:
         args.shutdown_button_gpio,
     }:
         parser.error("--status-led-gpio must be different from button/switch GPIOs")
+
+    fast_channel_switching = args.target_hz >= 500 and args.adc_samples == 1
 
     waveshare_reserved_gpios = {17, 18, 22, 23, 27}
     control_gpios = {
@@ -790,6 +792,8 @@ def main() -> None:
         )
 
         print("Live output in mm started. Stop with Ctrl+C.")
+        if fast_channel_switching:
+            print("Fast channel switching enabled for 500 Hz streaming (no extra post-MUX discard).")
         if args.switch_gpio is not None:
             log_switch = LoggingSwitch(args.switch_gpio, debounce_ms=args.switch_debounce_ms)
             print(f"Switch logging control enabled on BCM GPIO {args.switch_gpio}.")
@@ -875,7 +879,11 @@ def main() -> None:
                     loop_interval_max_s = loop_interval
             last_loop_started = loop_started
 
-            shock_raw = adc.read_adc_raw_stable(channel=0, samples=args.adc_samples)
+            shock_raw = adc.read_adc_raw_stable(
+                channel=0,
+                samples=args.adc_samples,
+                discard_first_after_mux=not fast_channel_switching,
+            )
             shock_voltage = adc.raw_to_voltage(shock_raw, vref=5.0, pga=1)
             shock_travel_mm = to_mm_with_range(
                 shock_voltage,
@@ -884,7 +892,11 @@ def main() -> None:
                 args.shock_travel_mm_max,
             )
 
-            fork_raw = adc.read_adc_raw_stable(channel=1, samples=args.adc_samples)
+            fork_raw = adc.read_adc_raw_stable(
+                channel=1,
+                samples=args.adc_samples,
+                discard_first_after_mux=not fast_channel_switching,
+            )
             fork_voltage = adc.raw_to_voltage(fork_raw, vref=5.0, pga=1)
             fork_travel_mm = to_mm_with_range(
                 fork_voltage,

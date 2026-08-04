@@ -158,6 +158,38 @@ def test_initialize_rejects_wrong_chip_id(monkeypatch: pytest.MonkeyPatch) -> No
         adc.initialize_single_ended()
 
 
+def test_read_adc_raw_can_skip_post_mux_discard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fast path should avoid the extra conversion throwaway after MUX changes."""
+    adc, _, _ = build_fake_adc(monkeypatch)
+
+    calls: list[str] = []
+    adc._selected_channel = None
+    monkeypatch.setattr(adc, "select_single_ended_channel", lambda channel: calls.append(f"select:{channel}"))
+    monkeypatch.setattr(adc, "wait_drdy", lambda timeout_s=1.0: calls.append("wait"))
+    monkeypatch.setattr(adc, "_read_current_conversion", lambda: calls.append("read") or [0x00, 0x00, 0x01])
+
+    raw = adc.read_adc_raw(channel=0, discard_first_after_mux=False)
+
+    assert raw == 1
+    assert calls == ["select:0", "wait", "read"]
+
+
+def test_read_adc_raw_fast_path_skips_pre_mux_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fast path should not wait before writing the next MUX value."""
+    adc, _, _ = build_fake_adc(monkeypatch)
+
+    calls: list[str] = []
+    adc._selected_channel = None
+    monkeypatch.setattr(adc, "wait_drdy", lambda timeout_s=1.0: calls.append("wait"))
+    monkeypatch.setattr(adc, "write_register", lambda *args, **kwargs: calls.append("write") or [])
+    monkeypatch.setattr(adc, "_read_current_conversion", lambda: calls.append("read") or [0x00, 0x00, 0x01])
+
+    raw = adc.read_adc_raw(channel=0, discard_first_after_mux=False)
+
+    assert raw == 1
+    assert calls == ["write", "wait", "read"]
+
+
 @pytest.mark.skipif(not SPI_DEVICE_PRESENT, reason="ADS1256 hardware test requires /dev/spidev0.0")
 def test_ads1256_hardware_spi_transfer() -> None:
     """Open the real SPI connection and verify that the ADS1256 responds.

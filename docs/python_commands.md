@@ -143,7 +143,7 @@ Reservierte GPIOs des direkt aufgesteckten Waveshare High-Precision AD/DA HAT:
 Startbeispiel:
 
 ```bash
-/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 5 --shutdown-button-gpio 6 --status-led-gpio 24 --quiet --target-hz 80
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 5 --shutdown-button-gpio 6 --status-led-gpio 24 --quiet --target-hz 500 --adc-samples 1
 ```
 
 Bedienung des Logging-Tasters:

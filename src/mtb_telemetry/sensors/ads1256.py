@@ -258,24 +258,26 @@ class ADS1256:
         self.wait_drdy()
         self._selected_channel = None
 
-    def select_single_ended_channel(self, channel: int) -> None:
+    def select_single_ended_channel(self, channel: int, wait_for_settle: bool = True) -> None:
         """Select a single-ended channel (AINx vs AINCOM)."""
         if not 0 <= channel <= 7:
             raise ValueError("channel must be between 0 and 7.")
-        self.wait_drdy()
+        if wait_for_settle:
+            self.wait_drdy()
         mux_value = (channel << 4) | 0x08
         self.write_register(self.MUX_REGISTER_ADDRESS, [mux_value])
 
-    def read_adc_raw(self, channel: int = 0) -> int:
+    def read_adc_raw(self, channel: int = 0, discard_first_after_mux: bool = True) -> int:
         """Read one 24-bit signed conversion from the selected single-ended channel."""
         if self._selected_channel != channel:
-            self.select_single_ended_channel(channel)
-            self.sync()
-            self.wake_up()
+            self.select_single_ended_channel(channel, wait_for_settle=discard_first_after_mux)
             self._selected_channel = channel
-            # Discard the first completed conversion after a MUX change.
-            self.wait_drdy()
-            self._read_current_conversion()
+            if discard_first_after_mux:
+                self.sync()
+                self.wake_up()
+                # Discard the first completed conversion after a MUX change.
+                self.wait_drdy()
+                self._read_current_conversion()
 
         self.wait_drdy()
         response = self._read_current_conversion()
@@ -295,12 +297,20 @@ class ADS1256:
         finally:
             self._deselect()
 
-    def read_adc_raw_stable(self, channel: int = 0, samples: int = 5) -> int:
+    def read_adc_raw_stable(
+        self,
+        channel: int = 0,
+        samples: int = 5,
+        discard_first_after_mux: bool = True,
+    ) -> int:
         """Read multiple conversions and return the median for better stability."""
         if samples < 1:
             raise ValueError("samples must be at least 1.")
 
-        values = [self.read_adc_raw(channel=channel) for _ in range(samples)]
+        values = [
+            self.read_adc_raw(channel=channel, discard_first_after_mux=discard_first_after_mux)
+            for _ in range(samples)
+        ]
         values.sort()
         return values[len(values) // 2]
 
