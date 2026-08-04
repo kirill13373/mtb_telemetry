@@ -2,7 +2,10 @@
 """Convert MTB telemetry CSV logs to Sufni Dashboard import format.
 
 Input (default): data/haltech_travel.csv
-Expected columns: timestamp, raw, voltage, travel_mm
+Expected columns (legacy): timestamp, raw, voltage, travel_mm
+Expected columns (dual sensor):
+    timestamp, shock_raw, shock_voltage, shock_travel_mm,
+    fork_raw, fork_voltage, fork_travel_mm
 
 Timestamp column format (both are accepted):
   - ISO-8601 UTC string (legacy):   2026-07-31T09:15:13.123456+00:00
@@ -96,32 +99,43 @@ def convert(
     output_path: Path,
     metadata_path: Path,
     fork_value: float,
+    fork_travel_mm_max: float,
+    shock_travel_mm_max: float,
     invert_shock_from_mm: bool,
     session_start_utc: datetime | None = None,
 ) -> None:
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    records: list[tuple[float | None, datetime | None, float]] = []
+    records: list[tuple[float | None, datetime | None, float, float | None]] = []
     with input_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        required = {"timestamp", "travel_mm"}
-        if reader.fieldnames is None or not required.issubset(set(reader.fieldnames)):
+        fieldnames = set(reader.fieldnames or [])
+        has_legacy_shock = "travel_mm" in fieldnames
+        has_dual_shock = "shock_travel_mm" in fieldnames
+        if reader.fieldnames is None or "timestamp" not in fieldnames or (not has_legacy_shock and not has_dual_shock):
             raise ValueError(
-                "Input CSV must contain columns 'timestamp' and 'travel_mm'. "
+                "Input CSV must contain 'timestamp' plus 'travel_mm' (legacy) "
+                "or 'shock_travel_mm' (dual sensor). "
                 f"Found: {reader.fieldnames}"
             )
 
         for row in reader:
             offset_s, utc_dt = _parse_timestamp(row["timestamp"], session_start_utc)
-            travel_mm = float(row["travel_mm"])
-            records.append((offset_s, utc_dt, travel_mm))
+            shock_travel_mm = float(
+                row["shock_travel_mm"] if has_dual_shock else row["travel_mm"]
+            )
+            fork_travel_mm: float | None = None
+            if "fork_travel_mm" in fieldnames and row.get("fork_travel_mm") not in {None, ""}:
+                fork_travel_mm = float(row["fork_travel_mm"])
+
+            records.append((offset_s, utc_dt, shock_travel_mm, fork_travel_mm))
 
     if not records:
         raise ValueError("Input CSV contains no data rows.")
 
     # Determine time source and session start UTC
-    first_offset, first_utc, _ = records[0]
+    first_offset, first_utc, _, _ = records[0]
     uses_monotonic = first_offset is not None
     if uses_monotonic:
         # Timestamps are already relative offsets; session start comes from metadata
@@ -135,7 +149,7 @@ def convert(
     times_s: list[float] = []
     output_rows: list[dict[str, str]] = []
 
-    for offset_s, utc_dt, travel_mm in records:
+    for offset_s, utc_dt, shock_travel_mm, fork_travel_mm in records:
         if uses_monotonic:
             rel_s = offset_s  # type: ignore[arg-type]
         else:
@@ -145,14 +159,20 @@ def convert(
 
         # haltech_two_point_mm stores 0..100 mm where 0 mm is compressed and
         # 100 mm is extended. Sufni expects Shock 0=extended, 1=compressed.
-        shock = travel_mm / 100.0
+        shock = shock_travel_mm / shock_travel_mm_max
         if invert_shock_from_mm:
             shock = 1.0 - shock
+
+        if fork_travel_mm is None:
+            fork = _clamp01(fork_value)
+        else:
+            # Same convention as shock in logger CSV: 0 mm compressed, max mm extended.
+            fork = 1.0 - (fork_travel_mm / fork_travel_mm_max)
 
         output_rows.append(
             {
                 "Time": f"{rel_s:.6f}",
-                "Fork": f"{_clamp01(fork_value):.6f}",
+                "Fork": f"{_clamp01(fork):.6f}",
                 "Shock": f"{_clamp01(shock):.6f}",
             }
         )
@@ -226,6 +246,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Constant normalized fork value (0..1) when no fork sensor is present.",
     )
     parser.add_argument(
+        "--shock-travel-mm-max",
+        type=float,
+        default=100.0,
+        help="Shock full-travel reference in mm for normalization (default: 100).",
+    )
+    parser.add_argument(
+        "--fork-travel-mm-max",
+        type=float,
+        default=200.0,
+        help="Fork full-travel reference in mm for normalization (default: 200).",
+    )
+    parser.add_argument(
         "--no-invert-shock",
         action="store_true",
         help="Disable inversion (use when travel_mm already means 0=extended, 100=compressed).",
@@ -239,11 +271,17 @@ def main() -> None:
     session_start_utc: datetime | None = None
     if args.session_start_utc is not None:
         session_start_utc = _parse_iso_utc(args.session_start_utc)
+    if args.shock_travel_mm_max <= 0:
+        parser.error("--shock-travel-mm-max must be > 0")
+    if args.fork_travel_mm_max <= 0:
+        parser.error("--fork-travel-mm-max must be > 0")
     convert(
         input_path=args.input,
         output_path=args.output,
         metadata_path=args.metadata,
         fork_value=args.fork_value,
+        fork_travel_mm_max=args.fork_travel_mm_max,
+        shock_travel_mm_max=args.shock_travel_mm_max,
         invert_shock_from_mm=not args.no_invert_shock,
         session_start_utc=session_start_utc,
     )

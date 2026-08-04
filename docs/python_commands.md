@@ -36,6 +36,24 @@ Alle ADS1256-Tests:
 
 ## 6) 2-Punkt-Kalibrierung und Live-Ausgabe in mm
 
+Hinweis: Das Skript wertet jetzt beide Sensoren parallel aus:
+- Shock auf AD0
+- Fork auf AD1
+
+Es werden getrennte Kalibrierdateien verwendet:
+- calibration/haltech_ads1256_ad0.json (Shock)
+- calibration/haltech_ads1256_ad1.json (Fork)
+
+Standard-Hub im Skript:
+- Shock: 100 mm
+- Fork: 200 mm
+
+Optional kannst du die Werte ueberschreiben, z. B.:
+
+```bash
+/home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --fork-travel-mm-max 200 --shock-travel-mm-max 100
+```
+
 Start mit gespeicherter Kalibrierung (falls vorhanden):
 
 ```bash
@@ -225,10 +243,11 @@ Pruefen, ob SPI-Devices vorhanden sind:
 ls /dev/spidev*
 ```
 
-Pruefen, ob Kalibrierdatei existiert:
+Pruefen, ob Kalibrierdateien existieren:
 
 ```bash
 ls calibration/haltech_ads1256_ad0.json
+ls calibration/haltech_ads1256_ad1.json
 ```
 
 ## 11) Sufni-CSV Export (mit RTC-Zeit)
