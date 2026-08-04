@@ -148,7 +148,7 @@ Startbeispiel:
 
 Bedienung des Logging-Tasters:
 - kurzer Druck: Logging AN/AUS
-- langer Druck (default 1500 ms): Session-Baseline fuer Shock und Fork neu setzen
+- langer Druck (default 2500 ms): Session-Baseline fuer Shock und Fork neu setzen
 - fuer den langen Druck das Bike anheben, damit Daempfer und Gabel voll ausgefedert sind
 - die Sensoren muessen dabei nicht selbst am mechanischen Endanschlag sein
 

@@ -311,6 +311,10 @@ class LoggingButton:
 
         return None
 
+    def consume_press_event(self) -> bool:
+        """Return True once per debounced press, regardless of short/long press."""
+        return self.consume_event() is not None
+
     def close(self) -> None:
         """Release only this GPIO pin during shutdown."""
         GPIO.cleanup(self.gpio_pin)
@@ -527,10 +531,10 @@ def main() -> None:
     parser.add_argument(
         "--button-long-press-ms",
         type=int,
-        default=1500,
+        default=2500,
         help=(
             "Hold time for --button-gpio to trigger per-session baseline calibration "
-            "instead of logging toggle (default: 1500)."
+            "instead of logging toggle (default: 2500)."
         ),
     )
     parser.add_argument(
