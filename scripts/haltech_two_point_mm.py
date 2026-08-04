@@ -253,7 +253,13 @@ class LoggingSwitch:
 class LoggingButton:
     """GPIO-backed momentary button with debounced press event detection."""
 
-    def __init__(self, gpio_pin: int, debounce_ms: int = 120, active_low: bool = True) -> None:
+    def __init__(
+        self,
+        gpio_pin: int,
+        debounce_ms: int = 120,
+        active_low: bool = True,
+        long_press_ms: int = 1500,
+    ) -> None:
         if GPIO is None:
             raise RuntimeError(
                 "RPi.GPIO is not available. Install python3-rpi.gpio or run on Raspberry Pi."
@@ -262,6 +268,7 @@ class LoggingButton:
         self.gpio_pin = gpio_pin
         self.active_low = active_low
         self.debounce_s = max(0.0, debounce_ms / 1000.0)
+        self.long_press_s = max(self.debounce_s, long_press_ms / 1000.0)
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
@@ -271,13 +278,14 @@ class LoggingButton:
         self._last_stable_pressed = self._read_pressed_raw()
         self._last_raw_pressed = self._last_stable_pressed
         self._last_change_time = time.monotonic()
+        self._press_started_at: float | None = time.monotonic() if self._last_stable_pressed else None
 
     def _read_pressed_raw(self) -> bool:
         level = GPIO.input(self.gpio_pin)
         return (level == GPIO.LOW) if self.active_low else (level == GPIO.HIGH)
 
-    def consume_press_event(self) -> bool:
-        """Return True exactly once per debounced button press edge."""
+    def consume_event(self) -> str | None:
+        """Return `short_press` or `long_press` once per debounced press cycle."""
         now = time.monotonic()
         raw_pressed = self._read_pressed_raw()
 
@@ -286,14 +294,22 @@ class LoggingButton:
             self._last_change_time = now
 
         if (now - self._last_change_time) < self.debounce_s:
-            return False
+            return None
 
         if raw_pressed != self._last_stable_pressed:
             self._last_stable_pressed = raw_pressed
             if raw_pressed:
-                return True
+                self._press_started_at = now
+            else:
+                if self._press_started_at is None:
+                    return None
+                pressed_for_s = now - self._press_started_at
+                self._press_started_at = None
+                if pressed_for_s >= self.long_press_s:
+                    return "long_press"
+                return "short_press"
 
-        return False
+        return None
 
     def close(self) -> None:
         """Release only this GPIO pin during shutdown."""
@@ -354,6 +370,35 @@ def to_mm_with_range(voltage: float, v_zero: float, v_full: float, full_scale_mm
         raise ValueError("Calibration span is too small. Check sensor movement and wiring.")
     mm = (voltage - v_zero) * (full_scale_mm / span)
     return max(0.0, min(full_scale_mm, mm))
+
+
+def perform_session_baseline(
+    adc: ADS1256,
+    sensor_name: str,
+    channel: int,
+    v_zero_ref: float,
+    v_full_ref: float,
+) -> tuple[float, float]:
+    """Re-anchor one session from a fully-extended measurement only.
+
+    The stored calibration span is preserved. A long button press is used to
+    tell the rider to lift the bike so the suspension sits at its unloaded,
+    fully extended ride state.
+    """
+    reference_span = v_full_ref - v_zero_ref
+    print(
+        f"Calibrating {sensor_name} baseline. Lift bike so the suspension is fully extended "
+        "(not the sensor by itself)..."
+    )
+    time.sleep(0.35)
+    session_v_full = sample_voltage(adc, sample_count=35, channel=channel)
+    session_v_zero = session_v_full - reference_span
+    drift_v = session_v_full - v_full_ref
+    print(
+        f"{sensor_name} baseline updated: extended={session_v_full:.4f} V "
+        f"(drift {drift_v:+.4f} V, span {reference_span:.4f} V)"
+    )
+    return session_v_zero, session_v_full
 
 
 def perform_calibration(
@@ -480,6 +525,15 @@ def main() -> None:
         help="Debounce time for --button-gpio in milliseconds (default: 120).",
     )
     parser.add_argument(
+        "--button-long-press-ms",
+        type=int,
+        default=1500,
+        help=(
+            "Hold time for --button-gpio to trigger per-session baseline calibration "
+            "instead of logging toggle (default: 1500)."
+        ),
+    )
+    parser.add_argument(
         "--shutdown-button-gpio",
         type=int,
         default=None,
@@ -561,6 +615,8 @@ def main() -> None:
         parser.error("--adc-samples must be at least 1")
     if args.csv_flush_every < 1:
         parser.error("--csv-flush-every must be at least 1")
+    if args.button_long_press_ms < 250:
+        parser.error("--button-long-press-ms must be at least 250")
     if args.shock_travel_mm_max <= 0:
         parser.error("--shock-travel-mm-max must be > 0")
     if args.fork_travel_mm_max <= 0:
@@ -736,11 +792,18 @@ def main() -> None:
             print("Switch to GND => logging ON, other position => logging paused.")
             print(f"Debounce: {args.switch_debounce_ms} ms")
         elif args.button_gpio is not None:
-            log_button = LoggingButton(args.button_gpio, debounce_ms=args.button_debounce_ms, active_low=True)
+            log_button = LoggingButton(
+                args.button_gpio,
+                debounce_ms=args.button_debounce_ms,
+                active_low=True,
+                long_press_ms=args.button_long_press_ms,
+            )
             print(f"Button logging control enabled on BCM GPIO {args.button_gpio}.")
             print("Wire button between GPIO and GND (internal pull-up active).")
-            print("Each press toggles logging ON/OFF.")
+            print("Short press toggles logging ON/OFF.")
+            print("Long press recalibrates the current session baseline (bike lifted).")
             print(f"Debounce: {args.button_debounce_ms} ms")
+            print(f"Long press: {args.button_long_press_ms} ms")
             print(f"Initial logging state: {'ON' if button_logging_enabled else 'OFF'}")
         elif args.log:
             print(f"Logging to {LOG_FILE}")
@@ -851,13 +914,32 @@ def main() -> None:
                         print("Logging OFF")
                     last_switch_state = switch_state
             elif log_button is not None:
-                if log_button.consume_press_event():
+                button_event = log_button.consume_event()
+                if button_event == "short_press":
                     button_logging_enabled = not button_logging_enabled
                     if button_logging_enabled:
                         current_log_file = build_session_log_file()
                         print(f"Logging ON -> {current_log_file}")
                     else:
                         print("Logging OFF")
+                elif button_event == "long_press":
+                    if button_logging_enabled:
+                        print("Ignore long press while logging is active. Stop logging first.")
+                    else:
+                        shock_v_zero, shock_v_hundred = perform_session_baseline(
+                            adc,
+                            sensor_name="Shock",
+                            channel=0,
+                            v_zero_ref=shock_v_zero,
+                            v_full_ref=shock_v_hundred,
+                        )
+                        fork_v_zero, fork_v_hundred = perform_session_baseline(
+                            adc,
+                            sensor_name="Fork",
+                            channel=1,
+                            v_zero_ref=fork_v_zero,
+                            v_full_ref=fork_v_hundred,
+                        )
                 logging_enabled = button_logging_enabled
 
             if shutdown_button is not None and shutdown_button.consume_press_event():

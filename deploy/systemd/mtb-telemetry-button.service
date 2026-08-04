@@ -13,6 +13,7 @@ RestartSec=2
 Environment=CONTROL_MODE=button
 Environment=CONTROL_GPIO=5
 Environment=CONTROL_DEBOUNCE_MS=120
+Environment=CONTROL_LONG_PRESS_MS=1500
 Environment=SHUTDOWN_GPIO=6
 Environment=SHUTDOWN_DEBOUNCE_MS=800
 Environment=STATUS_LED_GPIO=24

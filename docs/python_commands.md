@@ -146,6 +146,12 @@ Startbeispiel:
 /home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --button-gpio 5 --shutdown-button-gpio 6 --status-led-gpio 24 --quiet --target-hz 80
 ```
 
+Bedienung des Logging-Tasters:
+- kurzer Druck: Logging AN/AUS
+- langer Druck (default 1500 ms): Session-Baseline fuer Shock und Fork neu setzen
+- fuer den langen Druck das Bike anheben, damit Daempfer und Gabel voll ausgefedert sind
+- die Sensoren muessen dabei nicht selbst am mechanischen Endanschlag sein
+
 500-Hz Benchmark mit Laufzeit-Metriken (JSON-Report):
 
 ```bash

@@ -7,6 +7,7 @@ PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 CONTROL_MODE="${CONTROL_MODE:-switch}"
 CONTROL_GPIO="${CONTROL_GPIO:-27}"
 CONTROL_DEBOUNCE_MS="${CONTROL_DEBOUNCE_MS:-120}"
+CONTROL_LONG_PRESS_MS="${CONTROL_LONG_PRESS_MS:-1500}"
 SHUTDOWN_GPIO="${SHUTDOWN_GPIO:-}"
 SHUTDOWN_DEBOUNCE_MS="${SHUTDOWN_DEBOUNCE_MS:-800}"
 STATUS_LED_GPIO="${STATUS_LED_GPIO:-}"
@@ -20,7 +21,7 @@ PRINT_EVERY="${PRINT_EVERY:-1}"
 cd "$PROJECT_DIR"
 
 echo "Starting MTB telemetry logger..." >&2
-echo "CONTROL_MODE='${CONTROL_MODE}' CONTROL_GPIO='${CONTROL_GPIO}' CONTROL_DEBOUNCE_MS='${CONTROL_DEBOUNCE_MS}'" >&2
+echo "CONTROL_MODE='${CONTROL_MODE}' CONTROL_GPIO='${CONTROL_GPIO}' CONTROL_DEBOUNCE_MS='${CONTROL_DEBOUNCE_MS}' CONTROL_LONG_PRESS_MS='${CONTROL_LONG_PRESS_MS}'" >&2
 echo "SHUTDOWN_GPIO='${SHUTDOWN_GPIO}' SHUTDOWN_DEBOUNCE_MS='${SHUTDOWN_DEBOUNCE_MS}'" >&2
 echo "STATUS_LED_GPIO='${STATUS_LED_GPIO}' STATUS_LED_ACTIVE_LOW='${STATUS_LED_ACTIVE_LOW}'" >&2
 echo "SESSION_METRICS_JSON='${SESSION_METRICS_JSON}'" >&2
@@ -59,10 +60,11 @@ if [[ "$CONTROL_MODE" == "switch" ]]; then
     --switch-debounce-ms "$CONTROL_DEBOUNCE_MS" \
     "${common_args[@]}"
 elif [[ "$CONTROL_MODE" == "button" ]]; then
-  echo "Exec: $PYTHON_BIN scripts/haltech_two_point_mm.py --button-gpio $CONTROL_GPIO --button-debounce-ms $CONTROL_DEBOUNCE_MS ${common_args[*]}" >&2
+  echo "Exec: $PYTHON_BIN scripts/haltech_two_point_mm.py --button-gpio $CONTROL_GPIO --button-debounce-ms $CONTROL_DEBOUNCE_MS --button-long-press-ms $CONTROL_LONG_PRESS_MS ${common_args[*]}" >&2
   exec "$PYTHON_BIN" scripts/haltech_two_point_mm.py \
     --button-gpio "$CONTROL_GPIO" \
     --button-debounce-ms "$CONTROL_DEBOUNCE_MS" \
+    --button-long-press-ms "$CONTROL_LONG_PRESS_MS" \
     "${common_args[@]}"
 else
   echo "Unsupported CONTROL_MODE='$CONTROL_MODE' (expected 'switch' or 'button')" >&2
