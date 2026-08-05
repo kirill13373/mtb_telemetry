@@ -1,8 +1,8 @@
-# SSD1306 OLED Anschluss und Statusanzeige
+# SH1106 OLED Anschluss und Statusanzeige
 
 ## Hardwareanschluss (Raspberry Pi 4)
 
-Das bestellte SSD1306 OLED (I2C) wird so angeschlossen:
+Das verwendete SH1106 OLED (I2C) wird so angeschlossen:
 
 | OLED Pin | Raspberry Pi Pin | BCM | Hinweis |
 |---|---|---|---|
@@ -13,7 +13,7 @@ Das bestellte SSD1306 OLED (I2C) wird so angeschlossen:
 
 ## Warum diese Pins
 
-- Das SST-Firmwareprojekt nutzt fuer SSD1306 standardmaessig I2C mit Adresse `0x3C`.
+- Das Projekt nutzt fuer das SH1106 standardmaessig I2C mit Adresse `0x3C`.
 - In diesem Projekt sind folgende GPIOs bereits belegt und sollten fuer das OLED nicht benutzt werden:
   - ADS1256: GPIO17, GPIO18, GPIO22, GPIO27
   - Logging-/Shutdown-/LED: GPIO5, GPIO6, GPIO24
@@ -27,6 +27,9 @@ Die Anzeige ist absichtlich kompakt und entspricht den Anforderungen:
 1. Zeile 1: Uhrzeit + Status (`HH:MM:SS STATUS`)
 2. Zeile 2: Dauer + Samples (`D:xxxx.xs S:nnnn`)
 3. Zeile 3: Queue + Fehlerzaehler (`Q:a/b E:n`)
+
+`E` zaehlt nur Writer- und Queue-Fehler. Timing-Overruns werden in den
+Laufzeit-Metriken gespeichert und nicht als Displayfehler angezeigt.
 
 ### Statuswerte
 

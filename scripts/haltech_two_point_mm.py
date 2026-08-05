@@ -809,7 +809,6 @@ def main() -> None:
             stats = session_writer.snapshot_stats()
             queue_blocks = int(stats.get("queue_blocks", 0))
             queue_errors += int(stats.get("enqueue_timeout_count", 0))
-        queue_errors += loop_overrun_count
 
         if session_status in {"writer_error", "queue_overflow"}:
             queue_errors += 1

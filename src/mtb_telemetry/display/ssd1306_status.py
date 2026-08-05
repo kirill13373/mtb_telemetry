@@ -1,4 +1,4 @@
-"""Minimal SSD1306 status display for Raspberry Pi logger runtime info."""
+"""Minimal SH1106 status display for Raspberry Pi logger runtime info."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class OledStatusDisplay:
         try:
             from luma.core.interface.serial import i2c
             from luma.core.render import canvas
-            from luma.oled.device import ssd1306
+            from luma.oled.device import sh1106
         except ImportError as exc:
             raise RuntimeError(
                 "OLED dependencies are missing. Install on Pi: "
@@ -44,7 +44,8 @@ class OledStatusDisplay:
 
         self._canvas = canvas
         self._serial = i2c(port=i2c_port, address=i2c_address)
-        self._device = ssd1306(self._serial, width=128, height=64)
+        self._device = sh1106(self._serial, width=128, height=64)
+        self._device.clear()
         self._refresh_period_s = 1.0 / refresh_hz
         self._next_refresh_s = 0.0
         self._last: OledStatusSnapshot | None = None
