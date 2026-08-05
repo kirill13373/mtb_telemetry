@@ -109,6 +109,7 @@ def test_ads1256_can_be_instantiated() -> None:
     assert adc.bus == 0
     assert adc.device == 0
     assert adc.spi is not None
+    assert adc.data_rate == ADS1256.DRATE_30000_SPS
 
 
 def test_waveshare_open_configures_reserved_gpio_pins(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -56,9 +56,10 @@ from mtb_telemetry.logging import load_calibration, save_calibration
 from mtb_telemetry.sensors.ads1256 import ADS1256
 
 
-CALIBRATION_FILE_SHOCK = Path("calibration/haltech_ads1256_ad0.json")
-CALIBRATION_FILE_FORK = Path("calibration/haltech_ads1256_ad1.json")
-LOG_DIR = Path("data")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CALIBRATION_FILE_SHOCK = PROJECT_ROOT / "calibration" / "haltech_ads1256_ad0.json"
+CALIBRATION_FILE_FORK = PROJECT_ROOT / "calibration" / "haltech_ads1256_ad1.json"
+LOG_DIR = PROJECT_ROOT / "data"
 SUFNI_DIR = LOG_DIR / "sufni"
 LOG_FILE_PREFIX = "haltech_travel"
 SHUTDOWN_COMMAND_CANDIDATES = (
@@ -307,6 +308,25 @@ def sample_voltage(adc: ADS1256, sample_count: int = 40, channel: int = 0) -> fl
         values.append(adc.raw_to_voltage(raw, vref=5.0, pga=1))
         time.sleep(0.01)
     return statistics.median(values)
+
+
+def resolve_channel_switching_mode(target_hz: float, adc_samples: int, fast_channel_switching: bool) -> bool:
+    """Return whether the acquisition loop should use the faster channel-switching mode.
+
+    The ADS1256 can show noticeable channel-to-channel crosstalk when switching
+    channels very aggressively, especially at 500 Hz with a single sample per
+    channel. Keep this disabled by default and require explicit opt-in.
+    """
+    return bool(fast_channel_switching and target_hz >= 500 and adc_samples == 1)
+
+
+def resolve_post_mux_discard_mode(fast_channel_switching: bool) -> bool:
+    """Return whether the loop should discard the first conversion after MUX changes.
+
+    This extra discard is expensive and should stay disabled for the default
+    500 Hz acquisition path because it otherwise dominates the loop time.
+    """
+    return bool(fast_channel_switching)
 
 
 def save_calibration_file(path: Path, v_zero: float, v_hundred: float) -> None:
@@ -653,7 +673,15 @@ def main() -> None:
     }:
         parser.error("--status-led-gpio must be different from button/switch GPIOs")
 
-    fast_channel_switching = args.target_hz >= 500 and args.adc_samples == 1
+    fast_channel_switching = resolve_channel_switching_mode(
+        target_hz=args.target_hz,
+        adc_samples=args.adc_samples,
+        fast_channel_switching=False,
+    )
+    # A MUX write can leave the first completed conversion representing the
+    # prior channel. Discard it after every switch; the ADS1256 now runs at
+    # 30 kSPS, so this remains within the 500 Hz loop budget.
+    post_mux_discard = True
 
     waveshare_reserved_gpios = {17, 18, 22, 23, 27}
     control_gpios = {
@@ -1021,13 +1049,13 @@ def main() -> None:
             shock_raw = adc.read_adc_raw_stable(
                 channel=0,
                 samples=args.adc_samples,
-                discard_first_after_mux=not fast_channel_switching,
+                discard_first_after_mux=post_mux_discard,
             )
 
             fork_raw = adc.read_adc_raw_stable(
                 channel=1,
                 samples=args.adc_samples,
-                discard_first_after_mux=not fast_channel_switching,
+                discard_first_after_mux=post_mux_discard,
             )
             sample_index += 1
             if not args.quiet and sample_index % args.print_every == 0:

@@ -57,17 +57,28 @@ class ADS1256:
     COMMAND_WREG = 0x50
     DRATE_1000_SPS = 0xA1
     DRATE_2000_SPS = 0xB0
+    DRATE_7500_SPS = 0xD0
+    DRATE_30000_SPS = 0xF0
     DRDY_GPIO = 17
     RESET_GPIO = 18
     PDWN_GPIO = 27
     CS_GPIO = 22
     T6_DELAY_S = 0.000010
     COMMAND_DELAY_S = 0.000005
+    REGISTER_WRITE_DELAY_S = 0.000050
 
-    def __init__(self, bus: int = 0, device: int = 0) -> None:
+    def __init__(
+        self,
+        bus: int = 0,
+        device: int = 0,
+        channel_settle_s: float = 0.0,
+        data_rate: int = DRATE_30000_SPS,
+    ) -> None:
         self.spi = spidev.SpiDev()
         self.bus = bus
         self.device = device
+        self.channel_settle_s = max(0.0, float(channel_settle_s))
+        self.data_rate = data_rate
         self._selected_channel: int | None = None
         self._gpio_initialized = False
 
@@ -158,6 +169,8 @@ class ADS1256:
             return self.transfer(frame)
         finally:
             self._deselect()
+            # Keep SCLK idle long enough for the ADS1256 to apply WREG values.
+            time.sleep(self.REGISTER_WRITE_DELAY_S)
 
     def reset(self) -> list[int]:
         """Issue the ADS1256 reset command."""
@@ -249,11 +262,12 @@ class ADS1256:
         # STATUS: auto-calibration ON, optional buffer, MSB-first.
         # BUF=1 can reduce usable near-rail input range on single-supply setups.
         status_value = 0x06 if enable_input_buffer else 0x04
-        # Configure STATUS, MUX, ADCON and DRATE in one WREG transaction. This
-        # triggers auto-calibration only once and matches the Waveshare board.
+        # Configure STATUS, MUX, ADCON and DRATE in one WREG transaction. A
+        # 30 kSPS converter rate leaves room to discard one conversion after
+        # every MUX switch while maintaining a 500 Hz two-channel loop.
         self.write_register(
             self.STATUS_REGISTER_ADDRESS,
-            [status_value, 0x08, 0x00, self.DRATE_2000_SPS],
+            [status_value, 0x08, 0x00, self.data_rate],
         )
         self.wait_drdy()
         self._selected_channel = None
@@ -266,6 +280,8 @@ class ADS1256:
             self.wait_drdy()
         mux_value = (channel << 4) | 0x08
         self.write_register(self.MUX_REGISTER_ADDRESS, [mux_value])
+        if self.channel_settle_s > 0.0:
+            time.sleep(self.channel_settle_s)
 
     def read_adc_raw(self, channel: int = 0, discard_first_after_mux: bool = True) -> int:
         """Read one 24-bit signed conversion from the selected single-ended channel."""
