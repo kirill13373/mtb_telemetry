@@ -28,6 +28,10 @@ Environment=WRITER_QUEUE_BLOCKS=16
 Environment=WRITER_FSYNC_INTERVAL_S=2.0
 Environment=PRODUCER_CPU=2
 Environment=WRITER_CPU=3
+Environment=OLED_ENABLE=1
+Environment=OLED_I2C_BUS=1
+Environment=OLED_I2C_ADDRESS=0x3C
+Environment=OLED_REFRESH_HZ=2.0
 
 [Install]
 WantedBy=multi-user.target

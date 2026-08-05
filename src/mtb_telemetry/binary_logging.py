@@ -356,3 +356,17 @@ class BinarySessionWriter:
                 self._process.join(timeout=1.0)
             self._data_queue.close()
             self._result_queue.close()
+
+    def snapshot_stats(self) -> dict[str, int]:
+        """Return lightweight runtime counters for UI/status reporting."""
+        queue_blocks = 0
+        try:
+            queue_blocks = int(self._data_queue.qsize())
+        except (NotImplementedError, OSError):
+            queue_blocks = 0
+        return {
+            "queue_blocks": queue_blocks,
+            "queue_max_blocks_seen": int(self.queue_max_blocks_seen),
+            "enqueue_blocked_count": int(self.enqueue_blocked_count),
+            "enqueue_timeout_count": int(self.enqueue_timeout_count),
+        }

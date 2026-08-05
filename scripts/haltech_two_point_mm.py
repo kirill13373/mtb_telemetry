@@ -51,6 +51,7 @@ from mtb_telemetry.binary_logging import (
     BinaryLogQueueFull,
     BinarySessionWriter,
 )
+from mtb_telemetry.display.ssd1306_status import OledStatusDisplay, OledStatusSnapshot
 from mtb_telemetry.logging import load_calibration, save_calibration
 from mtb_telemetry.sensors.ads1256 import ADS1256
 
@@ -585,6 +586,29 @@ def main() -> None:
             "Useful for repeatable 500 Hz benchmark runs."
         ),
     )
+    parser.add_argument(
+        "--oled-display",
+        action="store_true",
+        help="Enable SSD1306 status display on Raspberry Pi I2C.",
+    )
+    parser.add_argument(
+        "--oled-i2c-bus",
+        type=int,
+        default=1,
+        help="I2C bus number for SSD1306 (default: 1).",
+    )
+    parser.add_argument(
+        "--oled-i2c-address",
+        type=lambda value: int(value, 0),
+        default=0x3C,
+        help="I2C address for SSD1306 (default: 0x3C).",
+    )
+    parser.add_argument(
+        "--oled-refresh-hz",
+        type=float,
+        default=2.0,
+        help="Display refresh rate in Hz (default: 2.0).",
+    )
     args = parser.parse_args()
     if args.print_every < 1:
         parser.error("--print-every must be at least 1")
@@ -598,6 +622,12 @@ def main() -> None:
         parser.error("--writer-queue-blocks must be at least 1")
     if args.writer_fsync_interval_s < 0:
         parser.error("--writer-fsync-interval-s must be >= 0")
+    if args.oled_i2c_bus < 0:
+        parser.error("--oled-i2c-bus must be >= 0")
+    if not 0 <= args.oled_i2c_address <= 0x7F:
+        parser.error("--oled-i2c-address must be a 7-bit I2C address (0x00..0x7F)")
+    if args.oled_refresh_hz <= 0:
+        parser.error("--oled-refresh-hz must be > 0")
     if args.producer_cpu is not None and args.producer_cpu < 0:
         parser.error("--producer-cpu must be >= 0")
     if args.writer_cpu is not None and args.writer_cpu < 0:
@@ -655,6 +685,7 @@ def main() -> None:
     log_button: LoggingButton | None = None
     shutdown_button: LoggingButton | None = None
     status_led: StatusLed | None = None
+    oled_display: OledStatusDisplay | None = None
     last_switch_state: bool | None = None
     button_logging_enabled = bool(args.log)
     prev_logging_enabled = False
@@ -676,6 +707,7 @@ def main() -> None:
     loop_overrun_count = 0
     loop_overrun_max_s = 0.0
     logged_sample_count = 0
+    queue_capacity = args.writer_queue_blocks
     sample_index = 0
     finalizer_ready = False
 
@@ -732,6 +764,39 @@ def main() -> None:
             "session_status": session_status,
             "writer": writer_metrics,
         }
+
+    def render_oled(status_text: str, loop_started: float) -> None:
+        nonlocal oled_display
+        if oled_display is None:
+            return
+
+        if session_start_monotonic is not None:
+            duration_s = max(0.0, loop_started - session_start_monotonic)
+        else:
+            duration_s = 0.0
+
+        queue_blocks = 0
+        queue_errors = 0
+        if session_writer is not None:
+            stats = session_writer.snapshot_stats()
+            queue_blocks = int(stats.get("queue_blocks", 0))
+            queue_errors += int(stats.get("enqueue_timeout_count", 0))
+        queue_errors += loop_overrun_count
+
+        if session_status in {"writer_error", "queue_overflow"}:
+            queue_errors += 1
+
+        oled_display.update(
+            OledStatusSnapshot(
+                clock_text=OledStatusDisplay.clock_now(),
+                status_text=status_text,
+                duration_s=duration_s,
+                samples=logged_sample_count,
+                queue_blocks=queue_blocks,
+                queue_capacity=queue_capacity,
+                error_count=queue_errors,
+            )
+        )
 
     def write_metrics_if_enabled(reason: str) -> None:
         if args.session_metrics_json is None:
@@ -849,6 +914,20 @@ def main() -> None:
             print("LED is ON while logging is active and OFF while paused.")
             print(f"Output mode: {'active-low' if args.status_led_active_low else 'active-high'}")
 
+        if args.oled_display:
+            try:
+                oled_display = OledStatusDisplay(
+                    i2c_port=args.oled_i2c_bus,
+                    i2c_address=args.oled_i2c_address,
+                    refresh_hz=args.oled_refresh_hz,
+                )
+                print(
+                    "SSD1306 display enabled "
+                    f"(I2C bus={args.oled_i2c_bus}, address=0x{args.oled_i2c_address:02X})."
+                )
+            except RuntimeError as exc:
+                print(f"OLED disabled: {exc}")
+
         def start_active_session(loop_started: float) -> None:
             nonlocal current_log_file, session_writer
             nonlocal session_start_monotonic, session_start_utc, session_status, writer_metrics
@@ -922,6 +1001,8 @@ def main() -> None:
                 print("Stop signal received. Finalizing active session...")
                 break
             loop_started = time.monotonic()
+
+            display_status = "IDLE"
             if acquisition_start_monotonic is None:
                 acquisition_start_monotonic = loop_started
                 acquisition_start_utc = datetime.now(timezone.utc)
@@ -1049,6 +1130,15 @@ def main() -> None:
                     logging_enabled = False
                     finalize_active_session()
 
+            if logging_enabled:
+                display_status = "REC"
+            elif session_status == "writer_error":
+                display_status = "ERR"
+            elif session_status == "queue_overflow":
+                display_status = "QFULL"
+
+            render_oled(display_status, loop_started)
+
             loop_elapsed = time.monotonic() - loop_started
             if loop_elapsed > loop_elapsed_max_s:
                 loop_elapsed_max_s = loop_elapsed
@@ -1113,6 +1203,8 @@ def main() -> None:
             shutdown_button.close()
         if status_led is not None:
             status_led.close()
+        if oled_display is not None:
+            oled_display.close()
         adc.close()
 
 
