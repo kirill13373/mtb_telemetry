@@ -1,0 +1,14 @@
+[Unit]
+Description=MTB telemetry hostapd
+PartOf=mtb-wifi-mode.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/hostapd /etc/hostapd/mtb-telemetry.conf
+StandardOutput=append:/var/log/mtb-hostapd.log
+StandardError=append:/var/log/mtb-hostapd.log
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

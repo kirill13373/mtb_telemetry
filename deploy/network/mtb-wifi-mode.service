@@ -1,0 +1,13 @@
+[Unit]
+Description=Select home Wi-Fi or MTB telemetry access point
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/mtb-wifi-mode start
+ExecStop=/usr/local/sbin/mtb-wifi-mode stop
+
+[Install]
+WantedBy=multi-user.target
