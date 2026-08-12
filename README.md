@@ -17,3 +17,8 @@ Sampling Rate
 - IMU: 500 Hz
 - GPS: 5 Hz
 - Hall Sensor: Interrupt
+
+Docs
+
+- Sufni CSV/dashboard overview: docs/sufni_dashboard.md
+- Reversible Raspberry Pi Sufni test workflow: docs/sufni_pi_test.md
