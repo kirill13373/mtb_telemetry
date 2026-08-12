@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert MTB telemetry CSV logs to Sufni Dashboard import format.
+"""Convert MTB telemetry binary or CSV logs to Sufni Dashboard import format.
 
 Input (default): data/haltech_travel.csv
 Expected columns (legacy): timestamp, raw, voltage, travel_mm
@@ -31,6 +31,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
+
+from mtb_telemetry.binary_logging import MAGIC, read_binary_log
 
 
 def _clamp01(value: float) -> float:
@@ -94,6 +96,23 @@ def _estimate_rate_hz(times_s: list[float]) -> float | None:
     return 1.0 / dt_med
 
 
+def _raw_to_voltage(raw_value: int, vref: float = 5.0, pga: int = 1) -> float:
+    """Convert a signed ADS1256 code without importing the hardware driver."""
+    return (raw_value / ((1 << 23) - 1)) * (vref / pga)
+
+
+def _to_mm(voltage: float, v_zero: float, v_full: float, full_scale_mm: float) -> float:
+    span = v_full - v_zero
+    if abs(span) < 0.01:
+        raise ValueError("Calibration span in binary log is too small")
+    return max(0.0, min(full_scale_mm, (voltage - v_zero) * (full_scale_mm / span)))
+
+
+def _is_binary_log(path: Path) -> bool:
+    with path.open("rb") as handle:
+        return handle.read(len(MAGIC)) == MAGIC
+
+
 def convert(
     input_path: Path,
     output_path: Path,
@@ -108,38 +127,62 @@ def convert(
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
     records: list[tuple[float | None, datetime | None, float, float | None]] = []
-    with input_path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = set(reader.fieldnames or [])
-        has_legacy_shock = "travel_mm" in fieldnames
-        has_dual_shock = "shock_travel_mm" in fieldnames
-        if reader.fieldnames is None or "timestamp" not in fieldnames or (not has_legacy_shock and not has_dual_shock):
-            raise ValueError(
-                "Input CSV must contain 'timestamp' plus 'travel_mm' (legacy) "
-                "or 'shock_travel_mm' (dual sensor). "
-                f"Found: {reader.fieldnames}"
+    binary_input = _is_binary_log(input_path)
+    if binary_input:
+        header, binary_records = read_binary_log(input_path)
+        session_start_utc = header.session_start_utc
+        shock_travel_mm_max = header.shock_travel_mm_max
+        fork_travel_mm_max = header.fork_travel_mm_max
+        for record in binary_records:
+            shock_travel_mm = _to_mm(
+                _raw_to_voltage(record.shock_raw),
+                header.shock_v_zero,
+                header.shock_v_full,
+                shock_travel_mm_max,
             )
-
-        for row in reader:
-            offset_s, utc_dt = _parse_timestamp(row["timestamp"], session_start_utc)
-            shock_travel_mm = float(
-                row["shock_travel_mm"] if has_dual_shock else row["travel_mm"]
+            fork_travel_mm = _to_mm(
+                _raw_to_voltage(record.fork_raw),
+                header.fork_v_zero,
+                header.fork_v_full,
+                fork_travel_mm_max,
             )
-            fork_travel_mm: float | None = None
-            if "fork_travel_mm" in fieldnames and row.get("fork_travel_mm") not in {None, ""}:
-                fork_travel_mm = float(row["fork_travel_mm"])
+            records.append((record.offset_ns / 1_000_000_000, None, shock_travel_mm, fork_travel_mm))
+    else:
+        with input_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = set(reader.fieldnames or [])
+            has_legacy_shock = "travel_mm" in fieldnames
+            has_dual_shock = "shock_travel_mm" in fieldnames
+            if reader.fieldnames is None or "timestamp" not in fieldnames or (not has_legacy_shock and not has_dual_shock):
+                raise ValueError(
+                    "Input CSV must contain 'timestamp' plus 'travel_mm' (legacy) "
+                    "or 'shock_travel_mm' (dual sensor). "
+                    f"Found: {reader.fieldnames}"
+                )
 
-            records.append((offset_s, utc_dt, shock_travel_mm, fork_travel_mm))
+            for row in reader:
+                offset_s, utc_dt = _parse_timestamp(row["timestamp"], session_start_utc)
+                shock_travel_mm = float(
+                    row["shock_travel_mm"] if has_dual_shock else row["travel_mm"]
+                )
+                fork_travel_mm: float | None = None
+                if "fork_travel_mm" in fieldnames and row.get("fork_travel_mm") not in {None, ""}:
+                    fork_travel_mm = float(row["fork_travel_mm"])
+
+                records.append((offset_s, utc_dt, shock_travel_mm, fork_travel_mm))
 
     if not records:
-        raise ValueError("Input CSV contains no data rows.")
+        raise ValueError("Input log contains no data records.")
 
     # Determine time source and session start UTC
     first_offset, first_utc, _, _ = records[0]
     uses_monotonic = first_offset is not None
     if uses_monotonic:
-        # Timestamps are already relative offsets; session start comes from metadata
-        time_source = "monotonic offset (reconstructed from run_started_utc)"
+        time_source = (
+            "monotonic nanosecond offset (binary session header)"
+            if binary_input
+            else "monotonic offset (reconstructed from session_start_utc)"
+        )
         resolved_start_utc = session_start_utc
     else:
         # Legacy ISO-UTC timestamps
@@ -190,7 +233,9 @@ def convert(
         "session_start_utc": None
         if resolved_start_utc is None
         else resolved_start_utc.isoformat().replace("+00:00", "Z"),
-        "source_csv": str(input_path),
+        "source_log": str(input_path),
+        "source_format": "mtblog-v1" if binary_input else "csv",
+        "source_csv": None if binary_input else str(input_path),
         "sufni_csv": str(output_path),
         "samples": len(output_rows),
         "duration_s": round(duration_s, 6),
@@ -210,12 +255,12 @@ def convert(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Convert telemetry CSV to Sufni CSV format.")
+    parser = argparse.ArgumentParser(description="Convert a telemetry binary/CSV log to Sufni CSV.")
     parser.add_argument(
         "--input",
         type=Path,
         default=Path("data/haltech_travel.csv"),
-        help="Input CSV path (default: data/haltech_travel.csv)",
+        help="Input .mtblog or CSV path (default: data/haltech_travel.csv)",
     )
     parser.add_argument(
         "--output",
@@ -234,9 +279,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Session start time in ISO-8601 UTC format. Required when the CSV uses "
-            "monotonic offsets instead of ISO timestamps. "
-            "Use run_started_utc from last_run_metrics.json."
+            "Session start time in ISO-8601 UTC format. Required only when a legacy CSV "
+            "uses monotonic offsets. Binary logs contain their own UTC session start."
         ),
     )
     parser.add_argument(

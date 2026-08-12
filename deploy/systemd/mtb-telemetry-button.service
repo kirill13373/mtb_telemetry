@@ -8,8 +8,10 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/mtb_telemetry
 ExecStart=/bin/bash /home/pi/mtb_telemetry/scripts/start_button_logger.sh
+KillMode=mixed
 Restart=always
 RestartSec=2
+TimeoutStopSec=20
 Environment=CONTROL_MODE=button
 Environment=CONTROL_GPIO=5
 Environment=CONTROL_DEBOUNCE_MS=120
@@ -21,7 +23,15 @@ Environment=STATUS_LED_ACTIVE_LOW=0
 Environment=SESSION_METRICS_JSON=/home/pi/mtb_telemetry/data/last_run_metrics.json
 Environment=TARGET_HZ=500
 Environment=ADC_SAMPLES=1
-Environment=CSV_FLUSH_EVERY=200
+Environment=BINARY_BLOCK_RECORDS=256
+Environment=WRITER_QUEUE_BLOCKS=16
+Environment=WRITER_FSYNC_INTERVAL_S=2.0
+Environment=PRODUCER_CPU=2
+Environment=WRITER_CPU=3
+Environment=OLED_ENABLE=1
+Environment=OLED_I2C_BUS=1
+Environment=OLED_I2C_ADDRESS=0x3C
+Environment=OLED_REFRESH_HZ=2.0
 
 [Install]
 WantedBy=multi-user.target

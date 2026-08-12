@@ -187,12 +187,36 @@ df[["Time", "Fork", "Shock"]].to_csv("session_sufni.csv", sep=";", index=False)
 
 ### 6.1 Projekt-Workflow (MTB Telemetry, mit RTC-Zeit)
 
-Fuer dieses Repository kann der Export direkt aus `data/haltech_travel.csv` erstellt werden:
+Neue Aufnahmen werden während der Fahrt nicht mehr als CSV formatiert. Der Logger
+schreibt stattdessen kompakte Dateien mit der Endung `.mtblog`:
+
+- Der Aufnahmeprozess liest nur AD0/AD1, setzt einen monotonen Zeitoffset und
+  füllt Blöcke mit festen 16-Byte-Records.
+- Ein separater Writer-Prozess schreibt diese Blöcke auf die SD-Karte.
+- Jeder Header enthält UTC-Sessionstart, Sollrate, Kalibrierung und Federwege.
+- Beim Stoppen wird der letzte Teilblock geschrieben und die Datei mit `fsync`
+  abgeschlossen. Erst danach startet der Sufni-Export.
+
+Bei 500 Records/s entstehen etwa 8 kB/s Primärdaten. Standardmäßig enthält ein
+Block 256 Records, die Queue hält 16 Blöcke und damit ungefähr 8 Sekunden Reserve
+gegen einzelne SD-Latenzspitzen. Eine dauerhaft volle Queue führt zu einem
+sichtbaren Sessionfehler statt zu unbemerkten Sampleverlusten.
+
+Der automatische Export erzeugt nach jeder abgeschlossenen Session:
+
+- `data/sufni/<session>_sufni.csv` mit `Time;Fork;Shock`
+- `data/sufni/<session>_sufni_meta.json` mit `session_start_utc`
+
+Der Zeitoffset beginnt für jede neue Session bei `0.000000`. Spannung, Federweg
+und Normalisierung werden beim Export aus Rohwerten und den im Binärheader
+gesicherten Kalibrierungswerten berechnet.
+
+Ein manueller Export ist ebenfalls möglich:
 
 ```bash
 cd /home/pi/mtb_telemetry
 /home/pi/mtb_telemetry/venv/bin/python scripts/export_sufni_csv.py \
-	--input data/haltech_travel.csv \
+	--input data/haltech_travel_20260805T120000_000000Z.mtblog \
 	--output data/session_sufni.csv \
 	--metadata data/session_sufni_meta.json
 ```
@@ -202,8 +226,30 @@ Das Skript erzeugt:
 - `data/session_sufni_meta.json` mit `session_start_utc`
 
 Im Sufni-Importdialog wird als **Start time** genau `session_start_utc` verwendet.
-Dieser Wert kommt aus dem ersten UTC-Timestamp deiner Aufzeichnung und damit aus der
-Pi-Systemzeit, die durch den DS3231 RTC stabil gehalten wird.
+Dieser Wert kommt bei `.mtblog` direkt aus dem Sessionheader und damit aus der
+Pi-Systemzeit, die durch den DS3231 RTC stabil gehalten wird. Ältere CSV-Dateien
+werden vom Exportskript weiterhin unterstützt.
+
+### 6.2 Writer-Konfiguration
+
+Die systemd-Umgebung stellt folgende Parameter bereit:
+
+| Variable | Standard | Bedeutung |
+|---|---:|---|
+| `BINARY_BLOCK_RECORDS` | 256 | Samples pro Übergabeblock |
+| `WRITER_QUEUE_BLOCKS` | 16 | Maximale Anzahl wartender Blöcke |
+| `WRITER_FSYNC_INTERVAL_S` | 2.0 | Periodischer Datenträger-Sync |
+| `PRODUCER_CPU` | 2 | CPU-Kern des Aufnahmeprozesses |
+| `WRITER_CPU` | 3 | Separater CPU-Kern des Writer-Prozesses |
+
+Die Laufzeitmetriken enthalten zusätzlich Writer-Blöcke, persistierte Bytes,
+Queue-Höchststand, blockierte Übergaben, Sync-Anzahl, Abschlusslatenz und den
+Sessionstatus. `systemctl stop` beziehungsweise `SIGTERM` löst einen geordneten
+Queue-Drain aus; der Service gewährt dafür bis zu 20 Sekunden.
+
+Die CPU-Bindung reduziert gegenseitige Verdrängung, macht Linux aber nicht zu
+einem harten Echtzeitsystem. Bei Problemen können beide Variablen leer gesetzt
+werden; die Prozess- und Puffertrennung bleibt trotzdem aktiv.
 
 ---
 

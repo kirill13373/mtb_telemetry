@@ -9,10 +9,11 @@ Workflow:
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+import signal
 import subprocess
 import statistics
 import sys
@@ -44,16 +45,23 @@ def _load_gpio_module():
 
 GPIO = _load_gpio_module()
 
+from mtb_telemetry.binary_logging import (
+    BinaryLogError,
+    BinaryLogHeader,
+    BinaryLogQueueFull,
+    BinarySessionWriter,
+)
+from mtb_telemetry.display.ssd1306_status import OledStatusDisplay, OledStatusSnapshot
 from mtb_telemetry.logging import load_calibration, save_calibration
 from mtb_telemetry.sensors.ads1256 import ADS1256
 
 
-CALIBRATION_FILE_SHOCK = Path("calibration/haltech_ads1256_ad0.json")
-CALIBRATION_FILE_FORK = Path("calibration/haltech_ads1256_ad1.json")
-LOG_DIR = Path("data")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CALIBRATION_FILE_SHOCK = PROJECT_ROOT / "calibration" / "haltech_ads1256_ad0.json"
+CALIBRATION_FILE_FORK = PROJECT_ROOT / "calibration" / "haltech_ads1256_ad1.json"
+LOG_DIR = PROJECT_ROOT / "data"
 SUFNI_DIR = LOG_DIR / "sufni"
 LOG_FILE_PREFIX = "haltech_travel"
-LOG_FILE = LOG_DIR / "haltech_travel.csv"
 SHUTDOWN_COMMAND_CANDIDATES = (
     "/usr/sbin/shutdown",
     "/sbin/shutdown",
@@ -62,28 +70,28 @@ SHUTDOWN_COMMAND_CANDIDATES = (
 
 
 def build_session_log_file(now_utc: datetime | None = None) -> Path:
-    """Return a unique CSV path for one recording session."""
+    """Return a unique binary path for one recording session."""
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
-    stamp = now_utc.strftime("%Y%m%dT%H%M%SZ")
-    return LOG_DIR / f"{LOG_FILE_PREFIX}_{stamp}.csv"
+    stamp = now_utc.strftime("%Y%m%dT%H%M%S_%fZ")
+    return LOG_DIR / f"{LOG_FILE_PREFIX}_{stamp}.mtblog"
 
 
-def build_sufni_output_paths(input_csv_path: Path) -> tuple[Path, Path]:
-    """Build Sufni output and metadata paths based on the source session CSV."""
-    stem = input_csv_path.stem
+def build_sufni_output_paths(input_path: Path) -> tuple[Path, Path]:
+    """Build Sufni output and metadata paths based on the source session log."""
+    stem = input_path.stem
     output_csv = SUFNI_DIR / f"{stem}_sufni.csv"
     output_meta = SUFNI_DIR / f"{stem}_sufni_meta.json"
     return output_csv, output_meta
 
 
 def export_session_to_sufni(
-    input_csv_path: Path,
+    input_path: Path,
     session_start_utc: datetime | None = None,
 ) -> None:
-    """Run the Sufni export script for one recorded session CSV."""
-    if not input_csv_path.exists() or input_csv_path.stat().st_size == 0:
-        print(f"Skip Sufni export (no data): {input_csv_path}")
+    """Run the Sufni export script for one recorded session log."""
+    if not input_path.exists() or input_path.stat().st_size == 0:
+        print(f"Skip Sufni export (no data): {input_path}")
         return
 
     export_script = Path(__file__).with_name("export_sufni_csv.py")
@@ -91,12 +99,12 @@ def export_session_to_sufni(
         print(f"Sufni export script missing: {export_script}")
         return
 
-    output_csv, output_meta = build_sufni_output_paths(input_csv_path)
+    output_csv, output_meta = build_sufni_output_paths(input_path)
     command = [
         sys.executable,
         str(export_script),
         "--input",
-        str(input_csv_path),
+        str(input_path),
         "--output",
         str(output_csv),
         "--metadata",
@@ -114,7 +122,7 @@ def export_session_to_sufni(
         if result.stdout.strip():
             print(result.stdout.strip())
     except subprocess.CalledProcessError as exc:
-        print(f"Sufni export failed for {input_csv_path}: {exc}")
+        print(f"Sufni export failed for {input_path}: {exc}")
         if exc.stdout:
             print(exc.stdout.strip())
         if exc.stderr:
@@ -151,61 +159,6 @@ def write_metrics_report(path: Path, payload: dict[str, object]) -> None:
     """Persist runtime metrics for benchmark comparisons."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-class SessionCsvWriter:
-    """Buffered CSV writer for high-rate logging without per-row file reopen."""
-
-    def __init__(self, path: Path, flush_every: int = 100) -> None:
-        self.path = path
-        self.flush_every = max(1, flush_every)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a", encoding="utf-8", newline="")
-        self._writer = csv.DictWriter(
-            self._handle,
-            fieldnames=[
-                "timestamp",
-                "shock_raw",
-                "shock_voltage",
-                "shock_travel_mm",
-                "fork_raw",
-                "fork_voltage",
-                "fork_travel_mm",
-            ],
-        )
-        if self.path.stat().st_size == 0:
-            self._writer.writeheader()
-        self._rows_since_flush = 0
-
-    def append(
-        self,
-        timestamp: str,
-        shock_raw: int,
-        shock_voltage: float,
-        shock_travel_mm: float,
-        fork_raw: int,
-        fork_voltage: float,
-        fork_travel_mm: float,
-    ) -> None:
-        self._writer.writerow(
-            {
-                "timestamp": timestamp,
-                "shock_raw": shock_raw,
-                "shock_voltage": round(shock_voltage, 6),
-                "shock_travel_mm": round(shock_travel_mm, 3),
-                "fork_raw": fork_raw,
-                "fork_voltage": round(fork_voltage, 6),
-                "fork_travel_mm": round(fork_travel_mm, 3),
-            }
-        )
-        self._rows_since_flush += 1
-        if self._rows_since_flush >= self.flush_every:
-            self._handle.flush()
-            self._rows_since_flush = 0
-
-    def close(self) -> None:
-        self._handle.flush()
-        self._handle.close()
 
 
 class LoggingSwitch:
@@ -357,6 +310,25 @@ def sample_voltage(adc: ADS1256, sample_count: int = 40, channel: int = 0) -> fl
     return statistics.median(values)
 
 
+def resolve_channel_switching_mode(target_hz: float, adc_samples: int, fast_channel_switching: bool) -> bool:
+    """Return whether the acquisition loop should use the faster channel-switching mode.
+
+    The ADS1256 can show noticeable channel-to-channel crosstalk when switching
+    channels very aggressively, especially at 500 Hz with a single sample per
+    channel. Keep this disabled by default and require explicit opt-in.
+    """
+    return bool(fast_channel_switching and target_hz >= 500 and adc_samples == 1)
+
+
+def resolve_post_mux_discard_mode(fast_channel_switching: bool) -> bool:
+    """Return whether the loop should discard the first conversion after MUX changes.
+
+    This extra discard is expensive and should stay disabled for the default
+    500 Hz acquisition path because it otherwise dominates the loop time.
+    """
+    return bool(fast_channel_switching)
+
+
 def save_calibration_file(path: Path, v_zero: float, v_hundred: float) -> None:
     """Persist calibration points to disk."""
     save_calibration(path, v_zero, v_hundred)
@@ -496,7 +468,7 @@ def main() -> None:
     parser.add_argument(
         "--log",
         action="store_true",
-        help="Append each reading to a CSV file in the data/ directory.",
+        help="Record readings to a binary session file in the data/ directory.",
     )
     parser.add_argument(
         "--switch-gpio",
@@ -596,10 +568,34 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--csv-flush-every",
+        "--binary-block-records",
         type=int,
-        default=120,
-        help="Flush CSV after N rows (default: 120).",
+        default=256,
+        help="Records per binary writer block (default: 256).",
+    )
+    parser.add_argument(
+        "--writer-queue-blocks",
+        type=int,
+        default=16,
+        help="Maximum queued binary blocks before logging stops explicitly (default: 16).",
+    )
+    parser.add_argument(
+        "--writer-fsync-interval-s",
+        type=float,
+        default=2.0,
+        help="Periodic binary writer fsync interval in seconds (default: 2.0).",
+    )
+    parser.add_argument(
+        "--producer-cpu",
+        type=int,
+        default=None,
+        help="Optional CPU core for the acquisition process.",
+    )
+    parser.add_argument(
+        "--writer-cpu",
+        type=int,
+        default=None,
+        help="Optional CPU core for the binary writer process.",
     )
     parser.add_argument(
         "--session-metrics-json",
@@ -610,6 +606,29 @@ def main() -> None:
             "Useful for repeatable 500 Hz benchmark runs."
         ),
     )
+    parser.add_argument(
+        "--oled-display",
+        action="store_true",
+        help="Enable SSD1306 status display on Raspberry Pi I2C.",
+    )
+    parser.add_argument(
+        "--oled-i2c-bus",
+        type=int,
+        default=1,
+        help="I2C bus number for SSD1306 (default: 1).",
+    )
+    parser.add_argument(
+        "--oled-i2c-address",
+        type=lambda value: int(value, 0),
+        default=0x3C,
+        help="I2C address for SSD1306 (default: 0x3C).",
+    )
+    parser.add_argument(
+        "--oled-refresh-hz",
+        type=float,
+        default=2.0,
+        help="Display refresh rate in Hz (default: 2.0).",
+    )
     args = parser.parse_args()
     if args.print_every < 1:
         parser.error("--print-every must be at least 1")
@@ -617,8 +636,24 @@ def main() -> None:
         parser.error("--target-hz must be >= 0")
     if args.adc_samples < 1:
         parser.error("--adc-samples must be at least 1")
-    if args.csv_flush_every < 1:
-        parser.error("--csv-flush-every must be at least 1")
+    if args.binary_block_records < 1:
+        parser.error("--binary-block-records must be at least 1")
+    if args.writer_queue_blocks < 1:
+        parser.error("--writer-queue-blocks must be at least 1")
+    if args.writer_fsync_interval_s < 0:
+        parser.error("--writer-fsync-interval-s must be >= 0")
+    if args.oled_i2c_bus < 0:
+        parser.error("--oled-i2c-bus must be >= 0")
+    if not 0 <= args.oled_i2c_address <= 0x7F:
+        parser.error("--oled-i2c-address must be a 7-bit I2C address (0x00..0x7F)")
+    if args.oled_refresh_hz <= 0:
+        parser.error("--oled-refresh-hz must be > 0")
+    if args.producer_cpu is not None and args.producer_cpu < 0:
+        parser.error("--producer-cpu must be >= 0")
+    if args.writer_cpu is not None and args.writer_cpu < 0:
+        parser.error("--writer-cpu must be >= 0")
+    if args.producer_cpu is not None and args.producer_cpu == args.writer_cpu:
+        parser.error("--producer-cpu and --writer-cpu must select different cores")
     if args.button_long_press_ms < 250:
         parser.error("--button-long-press-ms must be at least 250")
     if args.shock_travel_mm_max <= 0:
@@ -638,7 +673,15 @@ def main() -> None:
     }:
         parser.error("--status-led-gpio must be different from button/switch GPIOs")
 
-    fast_channel_switching = args.target_hz >= 500 and args.adc_samples == 1
+    fast_channel_switching = resolve_channel_switching_mode(
+        target_hz=args.target_hz,
+        adc_samples=args.adc_samples,
+        fast_channel_switching=False,
+    )
+    # A MUX write can leave the first completed conversion representing the
+    # prior channel. Discard it after every switch; the ADS1256 now runs at
+    # 30 kSPS, so this remains within the 500 Hz loop budget.
+    post_mux_discard = True
 
     waveshare_reserved_gpios = {17, 18, 22, 23, 27}
     control_gpios = {
@@ -656,17 +699,31 @@ def main() -> None:
 
     target_period_s = 0.0 if args.target_hz == 0 else (1.0 / args.target_hz)
 
+    if args.producer_cpu is not None:
+        if not hasattr(os, "sched_setaffinity"):
+            parser.error("--producer-cpu is not supported on this operating system")
+        try:
+            os.sched_setaffinity(0, {args.producer_cpu})
+        except OSError as exc:
+            parser.error(f"Could not bind acquisition process to CPU {args.producer_cpu}: {exc}")
+
     adc = ADS1256()
     adc.open()
     log_switch: LoggingSwitch | None = None
     log_button: LoggingButton | None = None
     shutdown_button: LoggingButton | None = None
     status_led: StatusLed | None = None
+    oled_display: OledStatusDisplay | None = None
     last_switch_state: bool | None = None
     button_logging_enabled = bool(args.log)
     prev_logging_enabled = False
     current_log_file: Path | None = None
-    session_writer: SessionCsvWriter | None = None
+    session_writer: BinarySessionWriter | None = None
+    session_start_monotonic: float | None = None
+    session_start_utc: datetime | None = None
+    writer_metrics: dict[str, object] = {}
+    session_status = "idle"
+    stop_requested = False
     acquisition_start_monotonic: float | None = None
     acquisition_start_utc: datetime | None = None
     last_loop_started: float | None = None
@@ -678,6 +735,16 @@ def main() -> None:
     loop_overrun_count = 0
     loop_overrun_max_s = 0.0
     logged_sample_count = 0
+    queue_capacity = args.writer_queue_blocks
+    sample_index = 0
+    finalizer_ready = False
+
+    def request_stop(_signum: int, _frame: object) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
 
     def build_metrics_payload(run_ended_utc: datetime, reason: str) -> dict[str, object]:
         """Build a consistent metrics payload for JSON reporting."""
@@ -700,7 +767,11 @@ def main() -> None:
             "report_reason": reason,
             "target_hz": args.target_hz,
             "adc_samples": args.adc_samples,
-            "csv_flush_every": args.csv_flush_every,
+            "binary_block_records": args.binary_block_records,
+            "writer_queue_blocks": args.writer_queue_blocks,
+            "writer_fsync_interval_s": args.writer_fsync_interval_s,
+            "producer_cpu": args.producer_cpu,
+            "writer_cpu": args.writer_cpu,
             "samples_total": sample_index,
             "samples_logged": logged_sample_count,
             "duration_s": round(duration_s, 6),
@@ -718,7 +789,41 @@ def main() -> None:
             "logging_mode": "switch"
             if args.switch_gpio is not None
             else ("button" if args.button_gpio is not None else "always_on"),
+            "session_status": session_status,
+            "writer": writer_metrics,
         }
+
+    def render_oled(status_text: str, loop_started: float) -> None:
+        nonlocal oled_display
+        if oled_display is None:
+            return
+
+        if session_start_monotonic is not None:
+            duration_s = max(0.0, loop_started - session_start_monotonic)
+        else:
+            duration_s = 0.0
+
+        queue_blocks = 0
+        queue_errors = 0
+        if session_writer is not None:
+            stats = session_writer.snapshot_stats()
+            queue_blocks = int(stats.get("queue_blocks", 0))
+            queue_errors += int(stats.get("enqueue_timeout_count", 0))
+
+        if session_status in {"writer_error", "queue_overflow"}:
+            queue_errors += 1
+
+        oled_display.update(
+            OledStatusSnapshot(
+                clock_text=OledStatusDisplay.clock_now(),
+                status_text=status_text,
+                duration_s=duration_s,
+                samples=logged_sample_count,
+                queue_blocks=queue_blocks,
+                queue_capacity=queue_capacity,
+                error_count=queue_errors,
+            )
+        )
 
     def write_metrics_if_enabled(reason: str) -> None:
         if args.session_metrics_json is None:
@@ -814,7 +919,7 @@ def main() -> None:
             print(f"Long press: {args.button_long_press_ms} ms")
             print(f"Initial logging state: {'ON' if button_logging_enabled else 'OFF'}")
         elif args.log:
-            print(f"Logging to {LOG_FILE}")
+            print(f"Binary session logging enabled in {LOG_DIR}")
 
         if args.shutdown_button_gpio is not None:
             shutdown_button = LoggingButton(
@@ -836,34 +941,95 @@ def main() -> None:
             print("LED is ON while logging is active and OFF while paused.")
             print(f"Output mode: {'active-low' if args.status_led_active_low else 'active-high'}")
 
-        def close_active_writer() -> None:
-            nonlocal session_writer
+        if args.oled_display:
+            try:
+                oled_display = OledStatusDisplay(
+                    i2c_port=args.oled_i2c_bus,
+                    i2c_address=args.oled_i2c_address,
+                    refresh_hz=args.oled_refresh_hz,
+                )
+                print(
+                    "SSD1306 display enabled "
+                    f"(I2C bus={args.oled_i2c_bus}, address=0x{args.oled_i2c_address:02X})."
+                )
+            except RuntimeError as exc:
+                print(f"OLED disabled: {exc}")
+
+        def start_active_session(loop_started: float) -> None:
+            nonlocal current_log_file, session_writer
+            nonlocal session_start_monotonic, session_start_utc, session_status, writer_metrics
             if session_writer is not None:
-                session_writer.close()
-                session_writer = None
+                return
+            session_start_monotonic = loop_started
+            session_start_utc = datetime.now(timezone.utc)
+            current_log_file = build_session_log_file(session_start_utc)
+            header = BinaryLogHeader.from_session(
+                session_start_utc=session_start_utc,
+                target_hz=args.target_hz,
+                block_records=args.binary_block_records,
+                shock_v_zero=shock_v_zero,
+                shock_v_full=shock_v_hundred,
+                fork_v_zero=fork_v_zero,
+                fork_v_full=fork_v_hundred,
+                shock_travel_mm_max=args.shock_travel_mm_max,
+                fork_travel_mm_max=args.fork_travel_mm_max,
+            )
+            session_writer = BinarySessionWriter(
+                current_log_file,
+                header,
+                queue_blocks=args.writer_queue_blocks,
+                fsync_interval_s=args.writer_fsync_interval_s,
+                writer_cpu=args.writer_cpu,
+            )
+            writer_metrics = {}
+            session_status = "recording"
+            print(f"Binary logging ON -> {current_log_file}")
 
         def finalize_active_session() -> None:
-            nonlocal current_log_file, prev_logging_enabled, button_logging_enabled, last_switch_state
+            nonlocal current_log_file, session_writer, session_start_monotonic, session_start_utc
+            nonlocal prev_logging_enabled, button_logging_enabled, last_switch_state
+            nonlocal writer_metrics, session_status
             if current_log_file is None:
                 return
 
-            close_active_writer()
+            export_path = current_log_file
+            export_start_utc = session_start_utc
+            if session_writer is not None:
+                try:
+                    writer_metrics = session_writer.close()
+                    if session_status == "recording":
+                        session_status = "complete"
+                except BinaryLogError as exc:
+                    session_status = "writer_error"
+                    writer_metrics = {"ok": False, "error": str(exc)}
+                    print(f"Binary writer finalization failed: {exc}")
+                finally:
+                    session_writer = None
             write_metrics_if_enabled("session_finalized")
-            export_session_to_sufni(current_log_file, session_start_utc=acquisition_start_utc)
+            if writer_metrics.get("ok"):
+                export_session_to_sufni(export_path, session_start_utc=export_start_utc)
             current_log_file = None
+            session_start_monotonic = None
+            session_start_utc = None
             prev_logging_enabled = False
             button_logging_enabled = False
             last_switch_state = False if log_switch is not None else last_switch_state
+
+        finalizer_ready = True
 
         # Spinwait threshold: sleep for (remaining - SPINWAIT_S), then busy-wait
         # for the last slice.  This avoids OS scheduler overshoot (~0.07 ms on Pi)
         # that prevents time.sleep() alone from reaching 500 Hz.
         SPINWAIT_S = 0.0008  # 0.8 ms: safe margin above max observed loop work
 
-        sample_index = 0
         next_deadline = 0.0  # initialised on first iteration
         while True:
+            if stop_requested:
+                print("Stop signal received. Finalizing active session...")
+                break
             loop_started = time.monotonic()
+
+            display_status = "IDLE"
             if acquisition_start_monotonic is None:
                 acquisition_start_monotonic = loop_started
                 acquisition_start_utc = datetime.now(timezone.utc)
@@ -882,33 +1048,32 @@ def main() -> None:
             shock_raw = adc.read_adc_raw_stable(
                 channel=0,
                 samples=args.adc_samples,
-                discard_first_after_mux=not fast_channel_switching,
-            )
-            shock_voltage = adc.raw_to_voltage(shock_raw, vref=5.0, pga=1)
-            shock_travel_mm = to_mm_with_range(
-                shock_voltage,
-                shock_v_zero,
-                shock_v_hundred,
-                args.shock_travel_mm_max,
+                discard_first_after_mux=post_mux_discard,
             )
 
             fork_raw = adc.read_adc_raw_stable(
                 channel=1,
                 samples=args.adc_samples,
-                discard_first_after_mux=not fast_channel_switching,
+                discard_first_after_mux=post_mux_discard,
             )
-            fork_voltage = adc.raw_to_voltage(fork_raw, vref=5.0, pga=1)
-            fork_travel_mm = to_mm_with_range(
-                fork_voltage,
-                fork_v_zero,
-                fork_v_hundred,
-                args.fork_travel_mm_max,
-            )
-
-            shock_clip_note = " [S_CLIP]" if shock_raw >= ((1 << 23) - 1) else ""
-            fork_clip_note = " [F_CLIP]" if fork_raw >= ((1 << 23) - 1) else ""
             sample_index += 1
             if not args.quiet and sample_index % args.print_every == 0:
+                shock_voltage = adc.raw_to_voltage(shock_raw, vref=5.0, pga=1)
+                shock_travel_mm = to_mm_with_range(
+                    shock_voltage,
+                    shock_v_zero,
+                    shock_v_hundred,
+                    args.shock_travel_mm_max,
+                )
+                fork_voltage = adc.raw_to_voltage(fork_raw, vref=5.0, pga=1)
+                fork_travel_mm = to_mm_with_range(
+                    fork_voltage,
+                    fork_v_zero,
+                    fork_v_hundred,
+                    args.fork_travel_mm_max,
+                )
+                shock_clip_note = " [S_CLIP]" if shock_raw >= ((1 << 23) - 1) else ""
+                fork_clip_note = " [F_CLIP]" if fork_raw >= ((1 << 23) - 1) else ""
                 print(
                     "shock="
                     f"{shock_voltage:>7.4f} V/{shock_travel_mm:>6.2f} mm"
@@ -924,8 +1089,7 @@ def main() -> None:
                 logging_enabled = switch_state
                 if switch_state != last_switch_state:
                     if switch_state:
-                        current_log_file = build_session_log_file()
-                        print(f"Logging ON -> {current_log_file}")
+                        print("Logging ON")
                     else:
                         print("Logging OFF")
                     last_switch_state = switch_state
@@ -934,8 +1098,7 @@ def main() -> None:
                 if button_event == "short_press":
                     button_logging_enabled = not button_logging_enabled
                     if button_logging_enabled:
-                        current_log_file = build_session_log_file()
-                        print(f"Logging ON -> {current_log_file}")
+                        print("Logging ON")
                     else:
                         print("Logging OFF")
                 elif button_event == "long_press":
@@ -977,24 +1140,31 @@ def main() -> None:
                 status_led.set_enabled(logging_enabled)
 
             if logging_enabled:
-                # Store monotonic offset from session start instead of
-                # formatting a UTC ISO string per sample (expensive in hot path).
-                # UTC timestamps are reconstructed during export.
-                if current_log_file is None:
-                    current_log_file = build_session_log_file()
                 if session_writer is None:
-                    session_writer = SessionCsvWriter(current_log_file, flush_every=args.csv_flush_every)
-                mono_offset_s = loop_started - acquisition_start_monotonic
-                session_writer.append(
-                    timestamp=f"{mono_offset_s:.6f}",
-                    shock_raw=shock_raw,
-                    shock_voltage=shock_voltage,
-                    shock_travel_mm=shock_travel_mm,
-                    fork_raw=fork_raw,
-                    fork_voltage=fork_voltage,
-                    fork_travel_mm=fork_travel_mm,
-                )
-                logged_sample_count += 1
+                    start_active_session(loop_started)
+                assert session_start_monotonic is not None
+                try:
+                    session_writer.append(
+                        offset_ns=int((loop_started - session_start_monotonic) * 1_000_000_000),
+                        shock_raw=shock_raw,
+                        fork_raw=fork_raw,
+                    )
+                    logged_sample_count += 1
+                except BinaryLogQueueFull as exc:
+                    print(f"Logging stopped: {exc}")
+                    session_status = "queue_overflow"
+                    stop_requested = True
+                    logging_enabled = False
+                    finalize_active_session()
+
+            if logging_enabled:
+                display_status = "REC"
+            elif session_status == "writer_error":
+                display_status = "ERR"
+            elif session_status == "queue_overflow":
+                display_status = "QFULL"
+
+            render_oled(display_status, loop_started)
 
             loop_elapsed = time.monotonic() - loop_started
             if loop_elapsed > loop_elapsed_max_s:
@@ -1018,9 +1188,9 @@ def main() -> None:
                     # Re-sync deadline to avoid cascading overruns
                     next_deadline = time.monotonic()
             prev_logging_enabled = logging_enabled
-    except KeyboardInterrupt:
-        print("\nStopped.")
     finally:
+        if current_log_file is not None and finalizer_ready:
+            finalize_active_session()
         run_ended_utc = datetime.now(timezone.utc)
         duration_s = 0.0
         effective_loop_hz = 0.0
@@ -1052,10 +1222,6 @@ def main() -> None:
 
         write_metrics_if_enabled("run_ended")
 
-        if session_writer is not None:
-            session_writer.close()
-        if prev_logging_enabled and current_log_file is not None:
-            export_session_to_sufni(current_log_file, session_start_utc=acquisition_start_utc)
         if log_switch is not None:
             log_switch.close()
         if log_button is not None:
@@ -1064,6 +1230,8 @@ def main() -> None:
             shutdown_button.close()
         if status_led is not None:
             status_led.close()
+        if oled_display is not None:
+            oled_display.close()
         adc.close()
 
 

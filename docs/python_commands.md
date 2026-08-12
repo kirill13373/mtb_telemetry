@@ -66,13 +66,15 @@ Kalibrierung erzwingen (0 mm / 100 mm neu aufnehmen):
 /home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --recalibrate
 ```
 
-Mit CSV-Logging starten:
+Mit binaerem Session-Logging starten:
 
 ```bash
 /home/pi/mtb_telemetry/venv/bin/python scripts/haltech_two_point_mm.py --log
 ```
 
-Die Messwerte werden dann in `data/haltech_travel.csv` gespeichert.
+Die Rohwerte werden in einer eindeutigen Datei `data/haltech_travel_*.mtblog`
+gespeichert. Nach dem geordneten Sessionende entstehen die Sufni-CSV und ihre
+Metadaten automatisch unter `data/sufni/`.
 
 Ohne laufende Terminal-Ausgabe (fuer spaeteren Headless-Betrieb):
 
@@ -260,7 +262,7 @@ ls calibration/haltech_ads1256_ad1.json
 
 Automatisch (Service/Logger):
 - Bei Logging ON -> OFF wird der Sufni-Export automatisch gestartet.
-- Pro Session-Datei `data/haltech_travel_*.csv` entstehen in `data/sufni/`:
+- Pro Session-Datei `data/haltech_travel_*.mtblog` entstehen in `data/sufni/`:
 	- `data/sufni/haltech_travel_*_sufni.csv`
 	- `data/sufni/haltech_travel_*_sufni_meta.json`
 
@@ -268,14 +270,14 @@ Nach einer Session mit `--log` in das Sufni-Format exportieren:
 
 ```bash
 /home/pi/mtb_telemetry/venv/bin/python scripts/export_sufni_csv.py \
-	--input data/haltech_travel.csv \
+	--input data/haltech_travel_20260805T120000_000000Z.mtblog \
 	--output data/session_sufni.csv \
 	--metadata data/session_sufni_meta.json
 ```
 
 Ergebnis:
 - `data/session_sufni.csv` im Sufni-Format `Time;Fork;Shock`
-- `data/session_sufni_meta.json` mit `session_start_utc` aus dem ersten Log-Timestamp (UTC, RTC-basiert)
+- `data/session_sufni_meta.json` mit `session_start_utc` aus dem Binärheader (UTC, RTC-basiert)
 
 Fuer den Sufni-Import:
 - CSV-Datei: `data/session_sufni.csv`
