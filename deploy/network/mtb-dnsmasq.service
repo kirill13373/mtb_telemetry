@@ -1,0 +1,16 @@
+[Unit]
+Description=MTB telemetry DHCP and DNS service
+PartOf=mtb-wifi-mode.service
+After=mtb-hostapd.service
+
+[Service]
+Type=simple
+RuntimeDirectory=mtb-dnsmasq
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dnsmasq.d/mtb-telemetry.conf --pid-file=/run/mtb-dnsmasq/dnsmasq.pid
+StandardOutput=append:/var/log/mtb-dnsmasq.log
+StandardError=append:/var/log/mtb-dnsmasq.log
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
