@@ -62,7 +62,7 @@ Danach die Baseline nochmals ausfuehren und pruefen, dass SSH, Samba und Hotspot
 
 ## 4. Sufni isoliert vorbereiten
 
-Standardmaessig wird nicht auf dem floatenden `main` geblieben. Ohne gesetzte Version waehlt der Helfer den neuesten verfuegbaren Git-Tag.
+Standardmaessig wird der aktuelle `main`-Stand verwendet, passend zum Dashboard auf dem Windows-PC. Fuer reproduzierbare Tests kann `SUFNI_REF` auf einen konkreten Commit oder Tag gesetzt werden.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\sufni_test.ps1 prepare
@@ -71,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\sufni_test.ps1 prepa
 Falls eine konkrete Version genutzt werden soll:
 
 ```powershell
-$env:SUFNI_REF = 'v0.4.0-alpha'
+$env:SUFNI_REF = '9efe33da8733db54468ca2554f6232638ae2818a'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\sufni_test.ps1 prepare
 Remove-Item Env:SUFNI_REF
 ```

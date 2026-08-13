@@ -29,7 +29,7 @@ Environment:
   SUFNI_TEST_ROOT   Override the remote test root (default: ~/sufni_test)
   SUFNI_SST_DIR     Override the Sufni checkout path (default: ~/sufni_test/sst)
   SUFNI_REPO_URL    Override the git repository URL
-  SUFNI_REF         Git tag, branch or commit to checkout during prepare
+  SUFNI_REF         Git tag, branch or commit to checkout during prepare (default: main)
   SUFNI_HOTSPOT_IP  Expected hotspot IP for URL output (default: 192.168.10.1)
 EOF
 }
@@ -70,10 +70,6 @@ run_compose() {
   else
     sudo docker compose "$@"
   fi
-}
-
-latest_tag() {
-  git -C "$SST_DIR" tag --sort=-version:refname | head -n 1
 }
 
 run_baseline() {
@@ -169,7 +165,7 @@ run_prepare() {
   selected_ref="$REF"
 
   if [[ -z "$selected_ref" ]]; then
-    selected_ref="$(latest_tag || true)"
+    selected_ref="main"
   fi
 
   if [[ -n "$selected_ref" ]]; then

@@ -16,7 +16,10 @@ source "$CONFIG_FILE"
 : "${HOME_CONNECT_TIMEOUT:=30}"
 
 is_home_connected() {
-    [[ "$(nmcli -g GENERAL.CONNECTION device show "$WLAN_INTERFACE" 2>/dev/null || true)" == "$HOME_CONNECTION_NAME" ]]
+    local connection state
+    connection="$(nmcli -g GENERAL.CONNECTION device show "$WLAN_INTERFACE" 2>/dev/null || true)"
+    state="$(nmcli -g GENERAL.STATE device show "$WLAN_INTERFACE" 2>/dev/null || true)"
+    [[ "$connection" == "$HOME_CONNECTION_NAME" && "$state" == 100* ]]
 }
 
 stop_access_point() {
@@ -37,7 +40,9 @@ start_client_mode() {
 
         attempt_timeout=$(( deadline - $(date +%s) ))
         (( attempt_timeout > 0 )) || break
-        (( attempt_timeout > 5 )) && attempt_timeout=5
+        if (( attempt_timeout > 5 )); then
+            attempt_timeout=5
+        fi
         nmcli -w "$attempt_timeout" connection up id "$HOME_CONNECTION_NAME" ifname "$WLAN_INTERFACE" || true
     done
 
