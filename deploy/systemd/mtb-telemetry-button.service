@@ -23,12 +23,16 @@ Environment=STATUS_LED_ACTIVE_LOW=0
 Environment=SESSION_METRICS_JSON=/home/pi/mtb_telemetry/data/last_run_metrics.json
 Environment=TARGET_HZ=500
 Environment=ADC_SAMPLES=1
+Environment=SHOCK_SENSOR_TRAVEL_MM_MAX=100
+Environment=FORK_SENSOR_TRAVEL_MM_MAX=200
+Environment=SHOCK_BIKE_TRAVEL_MM=60
+Environment=FORK_BIKE_TRAVEL_MM=170
 Environment=BINARY_BLOCK_RECORDS=256
 Environment=WRITER_QUEUE_BLOCKS=16
 Environment=WRITER_FSYNC_INTERVAL_S=2.0
 Environment=PRODUCER_CPU=2
 Environment=WRITER_CPU=3
-Environment=OLED_ENABLE=1
+Environment=OLED_ENABLE=0
 Environment=OLED_I2C_BUS=1
 Environment=OLED_I2C_ADDRESS=0x3C
 Environment=OLED_REFRESH_HZ=2.0

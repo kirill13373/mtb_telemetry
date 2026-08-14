@@ -128,23 +128,25 @@ def convert(
 
     records: list[tuple[float | None, datetime | None, float, float | None]] = []
     binary_input = _is_binary_log(input_path)
+    shock_sensor_travel_mm_max = shock_travel_mm_max
+    fork_sensor_travel_mm_max = fork_travel_mm_max
     if binary_input:
         header, binary_records = read_binary_log(input_path)
         session_start_utc = header.session_start_utc
-        shock_travel_mm_max = header.shock_travel_mm_max
-        fork_travel_mm_max = header.fork_travel_mm_max
+        shock_sensor_travel_mm_max = header.shock_travel_mm_max
+        fork_sensor_travel_mm_max = header.fork_travel_mm_max
         for record in binary_records:
             shock_travel_mm = _to_mm(
                 _raw_to_voltage(record.shock_raw),
                 header.shock_v_zero,
                 header.shock_v_full,
-                shock_travel_mm_max,
+                shock_sensor_travel_mm_max,
             )
             fork_travel_mm = _to_mm(
                 _raw_to_voltage(record.fork_raw),
                 header.fork_v_zero,
                 header.fork_v_full,
-                fork_travel_mm_max,
+                fork_sensor_travel_mm_max,
             )
             records.append((record.offset_ns / 1_000_000_000, None, shock_travel_mm, fork_travel_mm))
     else:
@@ -202,15 +204,21 @@ def convert(
 
         # haltech_two_point_mm stores 0..100 mm where 0 mm is compressed and
         # 100 mm is extended. Sufni expects Shock 0=extended, 1=compressed.
-        shock = shock_travel_mm / shock_travel_mm_max
-        if invert_shock_from_mm:
-            shock = 1.0 - shock
+        if binary_input:
+            shock = (shock_sensor_travel_mm_max - shock_travel_mm) / shock_travel_mm_max
+        else:
+            shock = shock_travel_mm / shock_travel_mm_max
+            if invert_shock_from_mm:
+                shock = 1.0 - shock
 
         if fork_travel_mm is None:
             fork = _clamp01(fork_value)
         else:
-            # Same convention as shock in logger CSV: 0 mm compressed, max mm extended.
-            fork = 1.0 - (fork_travel_mm / fork_travel_mm_max)
+            if binary_input:
+                fork = (fork_sensor_travel_mm_max - fork_travel_mm) / fork_travel_mm_max
+            else:
+                # Same convention as shock in logger CSV: 0 mm compressed, max mm extended.
+                fork = 1.0 - (fork_travel_mm / fork_travel_mm_max)
 
         output_rows.append(
             {

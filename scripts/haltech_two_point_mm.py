@@ -88,6 +88,8 @@ def build_sufni_output_paths(input_path: Path) -> tuple[Path, Path]:
 def export_session_to_sufni(
     input_path: Path,
     session_start_utc: datetime | None = None,
+    shock_bike_travel_mm: float = 60.0,
+    fork_bike_travel_mm: float = 170.0,
 ) -> None:
     """Run the Sufni export script for one recorded session log."""
     if not input_path.exists() or input_path.stat().st_size == 0:
@@ -109,6 +111,10 @@ def export_session_to_sufni(
         str(output_csv),
         "--metadata",
         str(output_meta),
+        "--shock-travel-mm-max",
+        str(shock_bike_travel_mm),
+        "--fork-travel-mm-max",
+        str(fork_bike_travel_mm),
     ]
     if session_start_utc is not None:
         command += [
@@ -457,13 +463,25 @@ def main() -> None:
         "--shock-travel-mm-max",
         type=float,
         default=100.0,
-        help="Shock full-travel reference in mm (default: 100).",
+        help="Linear potentiometer full-scale reference in mm (default: 100).",
     )
     parser.add_argument(
         "--fork-travel-mm-max",
         type=float,
         default=200.0,
-        help="Fork full-travel reference in mm (default: 200).",
+        help="Linear potentiometer full-scale reference in mm (default: 200).",
+    )
+    parser.add_argument(
+        "--shock-bike-travel-mm",
+        type=float,
+        default=60.0,
+        help="Physical rear-shock stroke in mm for Sufni normalization (default: 60).",
+    )
+    parser.add_argument(
+        "--fork-bike-travel-mm",
+        type=float,
+        default=170.0,
+        help="Physical fork travel in mm for Sufni normalization (default: 170).",
     )
     parser.add_argument(
         "--log",
@@ -660,6 +678,10 @@ def main() -> None:
         parser.error("--shock-travel-mm-max must be > 0")
     if args.fork_travel_mm_max <= 0:
         parser.error("--fork-travel-mm-max must be > 0")
+    if args.shock_bike_travel_mm <= 0:
+        parser.error("--shock-bike-travel-mm must be > 0")
+    if args.fork_bike_travel_mm <= 0:
+        parser.error("--fork-bike-travel-mm must be > 0")
     if args.switch_gpio is not None and args.button_gpio is not None:
         parser.error("Use either --switch-gpio or --button-gpio, not both")
     if args.shutdown_button_gpio is not None and (
@@ -678,10 +700,7 @@ def main() -> None:
         adc_samples=args.adc_samples,
         fast_channel_switching=False,
     )
-    # A MUX write can leave the first completed conversion representing the
-    # prior channel. Discard it after every switch; the ADS1256 now runs at
-    # 30 kSPS, so this remains within the 500 Hz loop budget.
-    post_mux_discard = True
+    post_mux_discard = resolve_post_mux_discard_mode(fast_channel_switching)
 
     waveshare_reserved_gpios = {17, 18, 22, 23, 27}
     control_gpios = {
@@ -1007,7 +1026,12 @@ def main() -> None:
                     session_writer = None
             write_metrics_if_enabled("session_finalized")
             if writer_metrics.get("ok"):
-                export_session_to_sufni(export_path, session_start_utc=export_start_utc)
+                export_session_to_sufni(
+                    export_path,
+                    session_start_utc=export_start_utc,
+                    shock_bike_travel_mm=args.shock_bike_travel_mm,
+                    fork_bike_travel_mm=args.fork_bike_travel_mm,
+                )
             current_log_file = None
             session_start_monotonic = None
             session_start_utc = None
